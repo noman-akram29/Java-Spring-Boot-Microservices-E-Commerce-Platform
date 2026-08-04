@@ -8,18 +8,18 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @FeignClient(
-        name = "inventory-service",
-        url = "${inventory.service.url}"
+    name = "inventory-service",
+    url = "${inventory.service.url}"
 )
 public interface InventoryClient {
 
-    @PostMapping("/api/inventory")
-    ResponseEntity<InventoryResponse> upsertInventory(
-            @RequestBody InventoryRequest inventoryRequest
-    );
+	@PostMapping("/api/inventory")
+	ResponseEntity<InventoryResponse> upsertInventory(
+	    @RequestBody InventoryRequest inventoryRequest
+	);
 
-    @GetMapping("/api/inventory/{skuCode}")
-    ResponseEntity<InventoryResponse> getInventoryBySkuCode(
-            @PathVariable String skuCode
-    );
+	@GetMapping("/api/inventory/{skuCode}")
+	ResponseEntity<InventoryResponse> getInventoryBySkuCode(
+	    @PathVariable String skuCode
+	);
 }

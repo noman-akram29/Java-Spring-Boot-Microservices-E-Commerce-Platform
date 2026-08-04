@@ -1,6 +1,6 @@
 package com.programming.techie.api_gateway.config;
 
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.route.RouteLocator;
 import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
 import org.springframework.context.annotation.Bean;
@@ -9,35 +9,50 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class ApiGatewayConfig {
 
-    @Value("${product.service.url}")
-    private String productServiceUrl;
+	private final GatewayFilter swaggerServerRewrite;
 
-    @Value("${order.service.url}")
-    private String orderServiceUrl;
+	public ApiGatewayConfig(GatewayFilter swaggerServerRewrite) {
+		this.swaggerServerRewrite = swaggerServerRewrite;
+	}
 
-    @Value("${inventory.service.url}")
-    private String inventoryServiceUrl;
+	@Bean
+	public RouteLocator gatewayRoutes(RouteLocatorBuilder builder) {
 
-    @Bean
-    public RouteLocator routeLocator(RouteLocatorBuilder builder) {
+		return builder.routes()
 
-        return builder.routes()
+			.route("inventory-service", r -> r
+				.path("/inventory-service/**")
+				.filters(f -> f
+					.rewritePath(
+						"/inventory-service/(?<segment>.*)",
+						"/${segment}"
+					)
+					.filter(swaggerServerRewrite)
+				)
+				.uri("http://localhost:8081"))
 
-                // PRODUCT
-                .route("product-service", r -> r
-                        .path("/api/product/**")
-                        .uri(productServiceUrl))
+			.route("product-service", r -> r
+				.path("/product-service/**")
+				.filters(f -> f
+					.rewritePath(
+						"/product-service/(?<segment>.*)",
+						"/${segment}"
+					)
+					.filter(swaggerServerRewrite)
+				)
+				.uri("http://localhost:8082"))
 
-                // ORDER
-                .route("order-service", r -> r
-                        .path("/api/order/**")
-                        .uri(orderServiceUrl))
+			.route("order-service", r -> r
+				.path("/order-service/**")
+				.filters(f -> f
+					.rewritePath(
+						"/order-service/(?<segment>.*)",
+						"/${segment}"
+					)
+					.filter(swaggerServerRewrite)
+				)
+				.uri("http://localhost:8083"))
 
-                // INVENTORY
-                .route("inventory-service", r -> r
-                        .path("/api/inventory/**")
-                        .uri(inventoryServiceUrl))
-
-                .build();
-    }
+			.build();
+	}
 }

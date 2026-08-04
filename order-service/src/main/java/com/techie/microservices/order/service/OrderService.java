@@ -2,20 +2,18 @@ package com.techie.microservices.order.service;
 
 import com.techie.microservices.order.client.InventoryClient;
 import com.techie.microservices.order.dto.OrderRequest;
+import com.techie.microservices.order.dto.OrderResponse;
 import com.techie.microservices.order.event.OrderPlacedEvent;
 import com.techie.microservices.order.external.dto.InventoryRequest;
 import com.techie.microservices.order.external.dto.InventoryResponse;
 import com.techie.microservices.order.model.Order;
 import com.techie.microservices.order.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.transaction.annotation.Transactional;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
-
-import lombok.extern.slf4j.Slf4j;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
 
@@ -23,64 +21,85 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Slf4j
 @Transactional
-
 public class OrderService {
 
-    // private static final Logger log = LoggerFactory.getLogger(OrderService.class);
-    private final OrderRepository orderRepository;
-    private final InventoryClient inventoryClient;
-    private final KafkaTemplate<String, OrderPlacedEvent> kafkaTemplate;
+	private final OrderRepository orderRepository;
+	private final InventoryClient inventoryClient;
+	private final KafkaTemplate<String, OrderPlacedEvent> kafkaTemplate;
 
-    public boolean placeOrder(OrderRequest orderRequest) {
+	public OrderResponse placeOrder(OrderRequest orderRequest) {
 
-        try {
-            boolean isProductInStock = inventoryClient.isInStock(
-                    orderRequest.skuCode(),
-                    orderRequest.quantity()
-            );
+		try {
+			// 1. CHECK INVENTORY
+			boolean isProductInStock = inventoryClient.isInStock(
+			                               orderRequest.skuCode(),
+			                               orderRequest.quantity()
+			                           );
 
-            if (!isProductInStock) {
-                log.warn("Out of stock: {}", orderRequest.skuCode());
-                return false;
-            }
+			if (!isProductInStock) {
+				log.warn("Out of stock: {}", orderRequest.skuCode());
+				return new OrderResponse(
+				           null,
+				           "FAILED",
+				           "Product is out of stock"
+				       );
+			}
 
-            Order order = new Order();
-            order.setOrderNumber(UUID.randomUUID().toString());
-            order.setPrice(orderRequest.price());
-            order.setQuantity(orderRequest.quantity());
-            order.setSkuCode(orderRequest.skuCode());
+			// 2. DECREASE INVENTORY
+			ResponseEntity<InventoryResponse> response =
+			    inventoryClient.decreaseInventory(
+			        new InventoryRequest(
+			            orderRequest.skuCode(),
+			            orderRequest.quantity()
+			        )
+			    );
 
-            orderRepository.save(order);
+			if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+				log.error("Inventory decrease failed for SKU: {}", orderRequest.skuCode());
+				return new OrderResponse(
+				           null,
+				           "FAILED",
+				           "Inventory update failed"
+				       );
+			}
 
-            ResponseEntity<InventoryResponse> response =
-                    inventoryClient.decreaseInventory(
-                            new InventoryRequest(
-                                    orderRequest.skuCode(),
-                                    orderRequest.quantity()
-                            )
-                    );
+			log.info("Inventory updated for SKU: {}", orderRequest.skuCode());
 
-            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-                log.error("Inventory update failed");
-                return false;
-            }
+			// 3. SAVE ORDER
+			Order order = new Order();
+			order.setOrderNumber(UUID.randomUUID().toString());
+			order.setPrice(orderRequest.price());
+			order.setQuantity(orderRequest.quantity());
+			order.setSkuCode(orderRequest.skuCode());
 
-            log.info("Inventory updated for SKU: {}", orderRequest.skuCode());
+			orderRepository.save(order);
 
-            OrderPlacedEvent event = new OrderPlacedEvent(
-                    order.getOrderNumber(),
-                    orderRequest.userDetails().email()
-            );
+			log.info("Order saved successfully: {}", order.getOrderNumber());
 
-            kafkaTemplate.send("order-placed", event);
+			// 4. SEND EVENT
+			OrderPlacedEvent event = new OrderPlacedEvent(
+			    order.getOrderNumber(),
+			    orderRequest.userDetails().email()
+			);
 
-            log.info("Kafka event sent: {}", event);
+			kafkaTemplate.send("order-placed", event);
 
-            return true;
+			log.info("Kafka event sent: {}", event);
 
-        } catch (Exception e) {
-            log.error("Order processing failed", e);
-            return false;
-        }
-    }
+			return new OrderResponse(
+			           order.getOrderNumber(),
+			           "SUCCESS",
+			           "Order placed successfully"
+			       );
+
+		} catch (Exception e) {
+			log.error("Order processing failed", e);
+
+			return new OrderResponse(
+			           null,
+			           "FAILED",
+			           "Unexpected error: " + e.getMessage()
+			       );
+		}
+	}
 }

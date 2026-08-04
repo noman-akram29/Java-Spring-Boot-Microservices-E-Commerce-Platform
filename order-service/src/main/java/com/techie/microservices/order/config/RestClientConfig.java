@@ -16,26 +16,26 @@ import java.time.Duration;
 @Configuration
 public class RestClientConfig {
 
-    @Value("${inventory.url}")
-    private String inventoryServiceUrl;
+	@Value("${inventory.url}")
+	private String inventoryServiceUrl;
 
-    @Bean
-    public InventoryClient inventoryClient() {
+	@Bean
+	public InventoryClient inventoryClient() {
 
-        RestClient restClient = RestClient.builder()
-                .baseUrl(inventoryServiceUrl)
-                .build();
+		RestClient restClient = RestClient.builder()
+		                        .baseUrl(inventoryServiceUrl)
+		                        .build();
 
-        return HttpServiceProxyFactory
-                .builderFor(RestClientAdapter.create(restClient))
-                .build()
-                .createClient(InventoryClient.class);
-    }
+		return HttpServiceProxyFactory
+		       .builderFor(RestClientAdapter.create(restClient))
+		       .build()
+		       .createClient(InventoryClient.class);
+	}
 
-    private ClientHttpRequestFactory getClientRequestFactory() {
-        ClientHttpRequestFactorySettings clientHttpRequestFactorySettings = ClientHttpRequestFactorySettings.DEFAULTS
-                .withConnectTimeout(Duration.ofSeconds(3))
-                .withReadTimeout(Duration.ofSeconds(3));
-        return ClientHttpRequestFactories.get(clientHttpRequestFactorySettings);
-    }
+	private ClientHttpRequestFactory getClientRequestFactory() {
+		ClientHttpRequestFactorySettings clientHttpRequestFactorySettings = ClientHttpRequestFactorySettings.DEFAULTS
+		        .withConnectTimeout(Duration.ofSeconds(3))
+		        .withReadTimeout(Duration.ofSeconds(3));
+		return ClientHttpRequestFactories.get(clientHttpRequestFactorySettings);
+	}
 }

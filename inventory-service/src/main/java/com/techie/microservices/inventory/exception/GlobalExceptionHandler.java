@@ -11,54 +11,71 @@ import java.time.LocalDateTime;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    @ExceptionHandler(ResourceNotFoundException.class)
-    public ResponseEntity<ApiError> handleNotFound(
-            ResourceNotFoundException ex,
-            HttpServletRequest request
-    ) {
+	@ExceptionHandler(ResourceNotFoundException.class)
+	public ResponseEntity<ApiError> handleResourceNotFound(
+	    ResourceNotFoundException ex,
+	    HttpServletRequest request
+	) {
 
-        ApiError error = new ApiError(
-                LocalDateTime.now(),
-                HttpStatus.NOT_FOUND.value(),
-                "NOT_FOUND",
-                ex.getMessage(),
-                request.getRequestURI()
-        );
+		ApiError error = new ApiError(
+		    LocalDateTime.now(),
+		    HttpStatus.NOT_FOUND.value(),
+		    "NOT_FOUND",
+		    ex.getMessage(),
+		    request.getRequestURI()
+		);
 
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
-    }
+		return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
+	}
 
-    @ExceptionHandler(InsufficientStockException.class)
-    public ResponseEntity<ApiError> handleStock(
-            InsufficientStockException ex,
-            HttpServletRequest request
-    ) {
+	@ExceptionHandler(InsufficientStockException.class)
+	public ResponseEntity<ApiError> handleInsufficientStock(
+	    InsufficientStockException ex,
+	    HttpServletRequest request
+	) {
 
-        ApiError error = new ApiError(
-                LocalDateTime.now(),
-                HttpStatus.BAD_REQUEST.value(),
-                "INSUFFICIENT_STOCK",
-                ex.getMessage(),
-                request.getRequestURI()
-        );
+		ApiError error = new ApiError(
+		    LocalDateTime.now(),
+		    HttpStatus.BAD_REQUEST.value(),
+		    "INSUFFICIENT_STOCK",
+		    ex.getMessage(),
+		    request.getRequestURI()
+		);
 
-        return ResponseEntity.badRequest().body(error);
-    }
+		return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+	}
 
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiError> handleGeneric(
-            Exception ex,
-            HttpServletRequest request
-    ) {
+	@ExceptionHandler(IllegalStateException.class)
+	public ResponseEntity<ApiError> handleIllegalState(
+	    IllegalStateException ex,
+	    HttpServletRequest request
+	) {
 
-        ApiError error = new ApiError(
-                LocalDateTime.now(),
-                HttpStatus.INTERNAL_SERVER_ERROR.value(),
-                "INTERNAL_SERVER_ERROR",
-                ex.getMessage(),
-                request.getRequestURI()
-        );
+		ApiError error = new ApiError(
+		    LocalDateTime.now(),
+		    HttpStatus.INTERNAL_SERVER_ERROR.value(),
+		    "ILLEGAL_STATE",
+		    ex.getMessage(),
+		    request.getRequestURI()
+		);
 
-        return ResponseEntity.internalServerError().body(error);
-    }
+		return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+	}
+
+	@ExceptionHandler(Exception.class)
+	public ResponseEntity<ApiError> handleGenericException(
+	    Exception ex,
+	    HttpServletRequest request
+	) {
+
+		ApiError error = new ApiError(
+		    LocalDateTime.now(),
+		    HttpStatus.INTERNAL_SERVER_ERROR.value(),
+		    "INTERNAL_ERROR",
+		    ex.getMessage(),
+		    request.getRequestURI()
+		);
+
+		return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+	}
 }

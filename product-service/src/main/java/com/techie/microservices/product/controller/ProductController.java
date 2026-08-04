@@ -8,34 +8,37 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.validation.Valid;
-
 import lombok.RequiredArgsConstructor;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
-import jakarta.validation.Valid;
 
 import java.util.List;
 
-@Tag(name = "Product API", description = "Manage products")
+@Tag(
+    name = "Product API",
+    description = "Manage products and inventory synchronization"
+)
 @RestController
 @RequestMapping("/api/product")
 @RequiredArgsConstructor
 public class ProductController {
 
-    private final ProductService productService;
+	private final ProductService productService;
 
-    @Operation(summary = "Create product")
-    @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    public ProductResponse createProduct(@Valid @RequestBody ProductRequest productRequest) {
-        return productService.createProduct(productRequest);
-    }
+	@Operation(summary = "Create a new product")
+	@PostMapping
+	@ResponseStatus(HttpStatus.CREATED)
+	public ProductResponse createProduct(
+	    @Valid @RequestBody ProductRequest productRequest
+	) {
+		return productService.createProduct(productRequest);
+	}
 
-    @Operation(summary = "Get all products")
-    @GetMapping
-    @ResponseStatus(HttpStatus.OK)
-    public List<ProductResponse> getAllProducts() {
-        return productService.getAllProducts();
-    }
+	@Operation(summary = "Get all products with inventory details")
+	@GetMapping
+	@ResponseStatus(HttpStatus.OK)
+	public List<ProductResponse> getAllProducts() {
+		return productService.getAllProducts();
+	}
 }

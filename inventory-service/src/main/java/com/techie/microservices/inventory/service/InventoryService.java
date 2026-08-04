@@ -9,81 +9,160 @@ import com.techie.microservices.inventory.repository.InventoryRepository;
 
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class InventoryService {
 
-    @Autowired
-    private final InventoryRepository inventoryRepository;
+	private final InventoryRepository inventoryRepository;
 
-    public boolean isInStock(String skuCode, Integer quantity) {
-        return inventoryRepository.existsBySkuCodeAndQuantityIsGreaterThanEqual(skuCode, quantity);
-    }
+	public boolean isInStock(String skuCode, Integer quantity) {
 
-    @Transactional
-public InventoryResponse upsertInventory(InventoryRequest request) {
-    // Try to update first
-    int updatedCount = inventoryRepository.increaseInventoryQuantity(
-        request.skuCode(), 
-        request.quantity()
-    );
+		log.debug(
+		    "Checking inventory stock for skuCode: {} with quantity: {}",
+		    skuCode,
+		    quantity
+		);
 
-    inventoryRepository.flush();
-    
-    if (updatedCount == 0) {
-        // If no record was updated, create a new one
-        Inventory newInventory = new Inventory();
-        newInventory.setSkuCode(request.skuCode());
-        newInventory.setQuantity(request.quantity());
-        inventoryRepository.save(newInventory);
-        return mapToResponse(newInventory);
-    }
-    
-    // If updated, fetch and return the updated record
-    return inventoryRepository.findBySkuCode(request.skuCode())
-            .map(this::mapToResponse)
-            .orElseThrow(() -> new IllegalStateException("Inventory not found after update"));
-}
+		return inventoryRepository
+		       .existsBySkuCodeAndQuantityIsGreaterThanEqual(
+		           skuCode,
+		           quantity
+		       );
+	}
 
-@Transactional
-    public InventoryResponse decreaseInventory(InventoryRequest request) {
-        int updatedCount = inventoryRepository.decreaseInventoryQuantity(
-            request.skuCode(),
-            request.quantity()
-        );
+	@Transactional
+	public InventoryResponse upsertInventory(InventoryRequest request) {
 
-        if (updatedCount == 0) {
-            // Check if the item exists at all
-            boolean exists = inventoryRepository.findBySkuCode(request.skuCode()).isPresent();
-            if (!exists) {
-                throw new ResourceNotFoundException("Inventory not found for skuCode: " + request.skuCode());
-            }
-            throw new InsufficientStockException("Insufficient stock for skuCode: " + request.skuCode());
-        }
+		log.info(
+		    "Upserting inventory for skuCode: {} with quantity: {}",
+		    request.skuCode(),
+		    request.quantity()
+		);
 
-        // Return the updated inventory
-        return inventoryRepository.findBySkuCode(request.skuCode())
-                .map(this::mapToResponse)
-                .orElseThrow(() -> new IllegalStateException("Failed to retrieve updated inventory"));
-    }
+		int updatedCount = inventoryRepository.increaseInventoryQuantity(
+		                       request.skuCode(),
+		                       request.quantity()
+		                   );
 
-public InventoryResponse getInventoryBySkuCode(String skuCode) {
-        return inventoryRepository.findBySkuCode(skuCode)
-                .map(this::mapToResponse)
-                .orElseThrow(() -> new ResourceNotFoundException("Inventory not found for skuCode: " + skuCode));
-    }
+		inventoryRepository.flush();
 
+		if (updatedCount == 0) {
 
+			log.info(
+			    "Inventory does not exist. Creating new inventory for skuCode: {}",
+			    request.skuCode()
+			);
 
-private InventoryResponse mapToResponse(Inventory inventory) {
-    return new InventoryResponse(
-        inventory.getId(),
-        inventory.getSkuCode(),
-        inventory.getQuantity()
-    );
-}
+			Inventory newInventory = new Inventory();
+
+			newInventory.setSkuCode(request.skuCode());
+			newInventory.setQuantity(request.quantity());
+
+			Inventory savedInventory = inventoryRepository.save(newInventory);
+
+			log.info(
+			    "New inventory created successfully for skuCode: {}",
+			    request.skuCode()
+			);
+
+			return mapToResponse(savedInventory);
+		}
+
+		log.info(
+		    "Inventory updated successfully for skuCode: {}",
+		    request.skuCode()
+		);
+
+		return inventoryRepository.findBySkuCode(request.skuCode())
+		       .map(this::mapToResponse)
+		       .orElseThrow(() -> new IllegalStateException(
+		                        "Inventory not found after successful update for skuCode: "
+		                        + request.skuCode()
+		                    ));
+	}
+
+	@Transactional
+	public InventoryResponse decreaseInventory(InventoryRequest request) {
+
+		log.info(
+		    "Decreasing inventory for skuCode: {} with quantity: {}",
+		    request.skuCode(),
+		    request.quantity()
+		);
+
+		int updatedCount = inventoryRepository.decreaseInventoryQuantity(
+		                       request.skuCode(),
+		                       request.quantity()
+		                   );
+
+		if (updatedCount == 0) {
+
+			boolean inventoryExists = inventoryRepository
+			                          .findBySkuCode(request.skuCode())
+			                          .isPresent();
+
+			if (!inventoryExists) {
+
+				log.error(
+				    "Inventory not found for skuCode: {}",
+				    request.skuCode()
+				);
+
+				throw new ResourceNotFoundException(
+				    "Inventory not found for skuCode: "
+				    + request.skuCode()
+				);
+			}
+
+			log.error(
+			    "Insufficient stock for skuCode: {}",
+			    request.skuCode()
+			);
+
+			throw new InsufficientStockException(
+			    "Insufficient stock for skuCode: "
+			    + request.skuCode()
+			);
+		}
+
+		log.info(
+		    "Inventory decreased successfully for skuCode: {}",
+		    request.skuCode()
+		);
+
+		return inventoryRepository.findBySkuCode(request.skuCode())
+		       .map(this::mapToResponse)
+		       .orElseThrow(() -> new IllegalStateException(
+		                        "Failed to retrieve updated inventory for skuCode: "
+		                        + request.skuCode()
+		                    ));
+	}
+
+	public InventoryResponse getInventoryBySkuCode(String skuCode) {
+
+		log.debug(
+		    "Fetching inventory for skuCode: {}",
+		    skuCode
+		);
+
+		return inventoryRepository.findBySkuCode(skuCode)
+		       .map(this::mapToResponse)
+		       .orElseThrow(() -> new ResourceNotFoundException(
+		                        "Inventory not found for skuCode: " + skuCode
+		                    ));
+	}
+
+	private InventoryResponse mapToResponse(Inventory inventory) {
+
+		return new InventoryResponse(
+		           inventory.getId(),
+		           inventory.getSkuCode(),
+		           inventory.getQuantity()
+		       );
+	}
 }

@@ -1,9 +1,7 @@
 version: "3.8"
 
 services:
-  # =========================
-  # MYSQL (Order + Inventory)
-  # =========================
+
   mysql:
     image: mysql:8.0
     container_name: mysql-db
@@ -15,10 +13,16 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
 
-  # =========================
-  # MONGODB (Product Service)
-  # =========================
+
   mongodb:
     image: mongo:7
     container_name: mongo-db
@@ -30,10 +34,16 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
 
-  # =========================
-  # ZOOKEEPER
-  # =========================
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
     container_name: zookeeper
@@ -41,10 +51,16 @@ services:
       ZOOKEEPER_CLIENT_PORT: 2181
     ports:
       - "2181:2181"
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
 
-  # =========================
-  # KAFKA
-  # =========================
+
   kafka:
     image: confluentinc/cp-kafka:7.6.0
     container_name: kafka
@@ -57,6 +73,32 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 3G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+
+
+  mailhog:
+    image: mailhog/mailhog
+    container_name: mailhog
+    restart: always
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+
 
 volumes:
   mysql_data:
