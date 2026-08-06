@@ -150,7 +150,7 @@ services:
         <<: *common
         build:
             context: ./product-service
-            dockerfile: dockerfile
+            dockerfile: Dockerfile
         image: ecommerce/product-service:dev
         depends_on:
             mongodb:
@@ -178,7 +178,7 @@ services:
         <<: *common
         build:
             context: ./inventory-service
-            dockerfile: dockerfile
+            dockerfile: Dockerfile
         image: ecommerce/inventory-service:dev
         depends_on:
             mysql:
@@ -206,7 +206,7 @@ services:
         <<: *common
         build:
             context: ./order-service
-            dockerfile: dockerfile
+            dockerfile: Dockerfile
         image: ecommerce/order-service:dev
         depends_on:
             mysql:
@@ -238,7 +238,7 @@ services:
         <<: *common
         build:
             context: ./notification-service
-            dockerfile: dockerfile
+            dockerfile: Dockerfile
         image: ecommerce/notification-service:dev
         depends_on:
             kafka:
@@ -246,6 +246,7 @@ services:
             mailhog:
                 condition: service_healthy
         environment:
+            SERVER_PORT: ${NOTIFICATION_SERVICE_PORT}
             SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:${KAFKA_PORT}"
             SPRING_MAIL_HOST: mailhog
             SPRING_MAIL_PORT: 1025
@@ -262,7 +263,7 @@ services:
         <<: *common
         build:
             context: ./api-gateway
-            dockerfile: dockerfile
+            dockerfile: Dockerfile
         image: ecommerce/api-gateway:dev
         depends_on:
             inventory-service:

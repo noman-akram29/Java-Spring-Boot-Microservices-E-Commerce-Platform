@@ -46,7 +46,7 @@ COPY --from=build --chown=spring:spring /workspace/target/*.jar app.jar
 
 USER spring:spring
 
-EXPOSE 8084
+EXPOSE 8081
 
 # Uncomment if Spring Boot Actuator is enabled
 # HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
