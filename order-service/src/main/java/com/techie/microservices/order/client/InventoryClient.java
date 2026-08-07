@@ -8,7 +8,8 @@ import org.springframework.web.bind.annotation.*;
 
 @FeignClient(
     name = "inventory-service",
-    url = "${inventory.url}"
+    url = "${inventory.service.url}",
+	fallbackFactory = InventoryClientFallbackFactory.class
 )
 public interface InventoryClient {
 

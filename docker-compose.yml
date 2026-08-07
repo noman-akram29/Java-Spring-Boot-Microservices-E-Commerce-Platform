@@ -1,0 +1,304 @@
+x-default-logging: &default-logging
+    driver: json-file
+    options:
+        max-size: "10m"
+        max-file: "3"
+
+x-common: &common
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+        - ecommerce-network
+
+x-healthcheck: &default-healthcheck
+    interval: 10s
+    timeout: 5s
+    retries: 10
+
+services:
+    mongodb:
+        <<: *common
+        image: mongo:7
+        healthcheck:
+            <<: *default-healthcheck
+            test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+            retries: 5
+        secrets:
+            - mongo_root_password
+        environment:
+            MONGO_INITDB_ROOT_USERNAME: "${MONGO_ROOT_USERNAME}"
+            MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
+        ports:
+            - "${MONGO_PORT}:27017"
+        volumes:
+            - mongodb-data:/data/db
+        deploy:
+            resources:
+                limits:
+                    cpus: "2.0"
+                    memory: 2G
+                reservations:
+                    cpus: "0.5"
+                    memory: 512M
+
+    mysql:
+        <<: *common
+        image: mysql:8.4
+        healthcheck:
+            <<: *default-healthcheck
+            test:
+                [
+                    "CMD",
+                    "mysqladmin",
+                    "ping",
+                    "-h",
+                    "localhost",
+                    "-p${MYSQL_ROOT_PASSWORD}",
+                ]
+        secrets:
+            - mysql_root_password
+        environment:
+            MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+        ports:
+            - "${MYSQL_PORT}:3306"
+        volumes:
+            - mysql-data:/var/lib/mysql
+            - ./mysql:/docker-entrypoint-initdb.d:ro
+        deploy:
+            resources:
+                limits:
+                    cpus: "2.0"
+                    memory: 2G
+                reservations:
+                    cpus: "0.5"
+                    memory: 512M
+
+    kafka:
+        <<: *common
+        image: apache/kafka:3.9.0
+
+        environment:
+            KAFKA_NODE_ID: 1
+            KAFKA_PROCESS_ROLES: "broker,controller"
+            KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+            KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+            KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:${KAFKA_PORT}"
+            KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+            KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+            KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+            KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+            KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+            KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+            CLUSTER_ID: "5L6g3nShT-eMCtK--X86sw"
+
+        ports:
+            - "9092:9092"
+        volumes:
+            - kafka-data:/var/lib/kafka/data
+        healthcheck:
+            <<: *default-healthcheck
+            test:
+                [
+                    "CMD",
+                    "bash",
+                    "-c",
+                    "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1",
+                ]
+        deploy:
+            resources:
+                limits:
+                    cpus: "1.0"
+                    memory: 1G
+                reservations:
+                    cpus: "0.25"
+                    memory: 512M
+
+    mailpit:
+        <<: *common
+        image: axllent/mailpit:latest
+        healthcheck:
+            <<: *default-healthcheck
+            test:
+                [
+                    "CMD",
+                    "wget",
+                    "--spider",
+                    "-q",
+                    "http://localhost:8025/readyz",
+                ]
+
+        ports:
+            - "${MAILPIT_UI_PORT}:8025"
+            - "${MAILPIT_SMTP_PORT}:1025"
+        deploy:
+            resources:
+                limits:
+                    cpus: "0.25"
+                    memory: 128M
+                reservations:
+                    cpus: "0.05"
+                    memory: 32M
+
+    product-service:
+        <<: *common
+        build:
+            context: ./product-service
+            dockerfile: Dockerfile
+        image: ecommerce/product-service:dev
+        depends_on:
+            mongodb:
+                condition: service_healthy
+        environment:
+            SERVER_PORT: ${PRODUCT_SERVICE_PORT}
+            SPRING_DATA_MONGODB_URI: >-
+                mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongodb:27017/product-service?authSource=admin
+            INVENTORY_SERVICE_URL: "http://inventory-service:${INVENTORY_SERVICE_PORT}"
+        expose:
+            - "8082"
+        healthcheck:
+            <<: *default-healthcheck
+            test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+        deploy:
+            resources:
+                limits:
+                    cpus: "1.0"
+                    memory: 1G
+                reservations:
+                    cpus: "0.25"
+                    memory: 256M
+
+    inventory-service:
+        <<: *common
+        build:
+            context: ./inventory-service
+            dockerfile: Dockerfile
+        image: ecommerce/inventory-service:dev
+        depends_on:
+            mysql:
+                condition: service_healthy
+        environment:
+            SERVER_PORT: ${INVENTORY_SERVICE_PORT}
+            SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/${INVENTORY_DATABASE}"
+            SPRING_DATASOURCE_USERNAME: root
+            SPRING_DATASOURCE_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+        expose:
+            - "8081"
+        healthcheck:
+            <<: *default-healthcheck
+            test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+        deploy:
+            resources:
+                limits:
+                    cpus: "1.0"
+                    memory: 1G
+                reservations:
+                    cpus: "0.25"
+                    memory: 256M
+
+    order-service:
+        <<: *common
+        build:
+            context: ./order-service
+            dockerfile: Dockerfile
+        image: ecommerce/order-service:dev
+        depends_on:
+            mysql:
+                condition: service_healthy
+            kafka:
+                condition: service_healthy
+        environment:
+            SERVER_PORT: ${ORDER_SERVICE_PORT}
+            SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/${ORDER_DATABASE}"
+            SPRING_DATASOURCE_USERNAME: root
+            SPRING_DATASOURCE_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+            INVENTORY_SERVICE_URL: "http://inventory-service:${INVENTORY_SERVICE_PORT}"
+            SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:${KAFKA_PORT}"
+        expose:
+            - "8083"
+        healthcheck:
+            <<: *default-healthcheck
+            test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
+        deploy:
+            resources:
+                limits:
+                    cpus: "1.5"
+                    memory: 1536M
+                reservations:
+                    cpus: "0.50"
+                    memory: 512M
+
+    notification-service:
+        <<: *common
+        build:
+            context: ./notification-service
+            dockerfile: Dockerfile
+        image: ecommerce/notification-service:dev
+        depends_on:
+            kafka:
+                condition: service_healthy
+            mailpit:
+                condition: service_healthy
+        healthcheck:
+            <<: *default-healthcheck
+            test: ["CMD", "curl", "-f", "http://localhost:8084/actuator/health"]
+        environment:
+            SERVER_PORT: ${NOTIFICATION_SERVICE_PORT}
+            SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:${KAFKA_PORT}"
+            SPRING_MAIL_HOST: mailpit
+            SPRING_MAIL_PORT: 1025
+        deploy:
+            resources:
+                limits:
+                    cpus: "0.5"
+                    memory: 512M
+                reservations:
+                    cpus: "0.10"
+                    memory: 128M
+
+    api-gateway:
+        <<: *common
+        build:
+            context: ./api-gateway
+            dockerfile: Dockerfile
+        image: ecommerce/api-gateway:dev
+        depends_on:
+            inventory-service:
+                condition: service_healthy
+            product-service:
+                condition: service_healthy
+            order-service:
+                condition: service_healthy
+        healthcheck:
+            <<: *default-healthcheck
+            test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+        environment:
+            SERVER_PORT: ${API_GATEWAY_PORT}
+            INVENTORY_SERVICE_URL: "http://inventory-service:${INVENTORY_SERVICE_PORT}"
+            PRODUCT_SERVICE_URL: "http://product-service:${PRODUCT_SERVICE_PORT}"
+            ORDER_SERVICE_URL: "http://order-service:${ORDER_SERVICE_PORT}"
+        ports:
+            - "${API_GATEWAY_PORT}:8080"
+        deploy:
+            resources:
+                limits:
+                    cpus: "1.0"
+                    memory: 768M
+                reservations:
+                    cpus: "0.25"
+                    memory: 256M
+
+volumes:
+    mongodb-data:
+    mysql-data:
+    kafka-data:
+
+networks:
+    ecommerce-network:
+        driver: bridge
+
+secrets:
+    mysql_root_password:
+        file: ./secrets/mysql_root_password.txt
+
+    mongo_root_password:
+        file: ./secrets/mongo_root_password.txt
