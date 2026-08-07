@@ -118,7 +118,14 @@ services:
         image: axllent/mailpit:latest
         healthcheck:
             <<: *default-healthcheck
-            test: ["CMD", "wget", "--spider", "-q", "http://localhost:8025/readyz"]
+            test:
+                [
+                    "CMD",
+                    "wget",
+                    "--spider",
+                    "-q",
+                    "http://localhost:8025/readyz",
+                ]
 
         ports:
             - "${MAILPIT_UI_PORT}:8025"
