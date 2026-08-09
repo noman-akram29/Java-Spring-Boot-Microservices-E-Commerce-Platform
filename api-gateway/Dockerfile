@@ -44,6 +44,8 @@ RUN groupadd --gid 1001 spring && \
 # Copy executable JAR
 COPY --from=build --chown=spring:spring /workspace/target/*.jar app.jar
 
+COPY --chmod=755 entrypoint.sh /app/entrypoint.sh
+
 USER spring:spring
 
 EXPOSE 8080
@@ -52,4 +54,4 @@ EXPOSE 8080
 # HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 #     CMD wget --quiet --tries=1 --spider http://localhost:8084/actuator/health || exit 1
 
-ENTRYPOINT [ "java", "-XX:MaxRAMPercentage=75", "-XX:+ExitOnOutOfMemoryError", "-jar", "/app/app.jar" ]
+ENTRYPOINT [ "/app/entrypoint.sh" ]

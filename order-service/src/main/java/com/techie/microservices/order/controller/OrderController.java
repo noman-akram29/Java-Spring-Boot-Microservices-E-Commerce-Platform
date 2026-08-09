@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.*;
     description = "Manage Orders synchronization"
 )
 @RestController
-@RequestMapping("/api/order")
+// @RequestMapping("/api/order")
 @RequiredArgsConstructor
 public class OrderController {
 

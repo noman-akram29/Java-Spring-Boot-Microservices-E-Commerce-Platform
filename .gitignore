@@ -106,6 +106,7 @@ volume-data/
 # MySQL data
 **/mysql/data/
 **/docker/mysql/data/
+order-service/mysql/
 
 # MongoDB data
 **/data/db/

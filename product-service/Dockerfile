@@ -29,8 +29,8 @@ RUN --mount=type=cache,target=/root/.m2 \
 FROM eclipse-temurin:21-jre-jammy
 
 # OCI Image Metadata
-LABEL org.opencontainers.image.title="product-service" \
-    org.opencontainers.image.description="Spring Boot Application - Product Service" \
+LABEL org.opencontainers.image.title="api-gateway" \
+    org.opencontainers.image.description="Spring Boot Application - API Gateway" \
     org.opencontainers.image.vendor="NULL"
 
 WORKDIR /app
@@ -44,12 +44,14 @@ RUN groupadd --gid 1001 spring && \
 # Copy executable JAR
 COPY --from=build --chown=spring:spring /workspace/target/*.jar app.jar
 
+COPY --chmod=755 entrypoint.sh /app/entrypoint.sh
+
 USER spring:spring
 
-EXPOSE 8082
+EXPOSE 8080
 
 # Uncomment if Spring Boot Actuator is enabled
 # HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 #     CMD wget --quiet --tries=1 --spider http://localhost:8084/actuator/health || exit 1
 
-ENTRYPOINT [ "java", "-XX:MaxRAMPercentage=75", "-XX:+ExitOnOutOfMemoryError", "-jar", "/app/app.jar" ]
+ENTRYPOINT [ "/app/entrypoint.sh" ]

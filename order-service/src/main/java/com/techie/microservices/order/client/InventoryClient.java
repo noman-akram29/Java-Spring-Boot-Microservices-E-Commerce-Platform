@@ -13,14 +13,14 @@ import org.springframework.web.bind.annotation.*;
 )
 public interface InventoryClient {
 
-	@GetMapping("/api/inventory")
+	@GetMapping
 	boolean isInStock(
-	    @RequestParam String skuCode,
-	    @RequestParam Integer quantity
+		@RequestParam String skuCode,
+		@RequestParam Integer quantity
 	);
 
-	@PostMapping("/api/inventory/decrease")
+	@PostMapping("/decrease")
 	ResponseEntity<InventoryResponse> decreaseInventory(
-	    @RequestBody InventoryRequest request
+		@RequestBody InventoryRequest request
 	);
 }
