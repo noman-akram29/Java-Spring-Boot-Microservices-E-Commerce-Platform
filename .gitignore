@@ -1,9 +1,9 @@
-# =========================
-# Maven / Gradle
-# =========================
+# =====================================================
+# Java / Maven
+# =====================================================
 target/
-.gradle/
 build/
+.gradle/
 
 pom.xml.tag
 pom.xml.releaseBackup
@@ -13,34 +13,29 @@ release.properties
 dependency-reduced-pom.xml
 buildNumber.properties
 
-.mvn/timing.properties
-.mvn/wrapper/maven-wrapper.jar
-.mvn/wrapper/maven-wrapper.properties
+# Maven Wrapper
+!.mvn/wrapper/maven-wrapper.jar
+!.mvn/wrapper/maven-wrapper.properties
 
-!gradle/wrapper/gradle-wrapper.jar
-!**/src/main/**/build/
-!**/src/test/**/build/
-
-# =========================
+# =====================================================
 # IDEs
-# =========================
+# =====================================================
+
+# IntelliJ
 .idea/
-*.iws
 *.iml
 *.ipr
+*.iws
 out/
-.idea_modules/
 
+# Eclipse / STS
 .classpath
 .project
 .settings/
-bin/
-
-.vscode/
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
+.factorypath
+.apt_generated/
+.springBeans
+.sts4-cache/
 
 # NetBeans
 /nbproject/private/
@@ -49,114 +44,107 @@ bin/
 /nbdist/
 /.nb-gradle/
 
-# =========================
-# OS Files
-# =========================
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
 
+# =====================================================
+# Operating System
+# =====================================================
+
+.DS_Store
 Thumbs.db
-ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+.Spotlight-V100
+.Trashes
+._*
 
-*~
+# =====================================================
+# Logs
+# =====================================================
 
-# =========================
-# Java / JVM
-# =========================
+*.log
+logs/
+**/logs/
+
 hs_err_pid*
 replay_pid*
 
-# =========================
-# Logs
-# =========================
-*.log
-**/logs/
-
-# =========================
+# =====================================================
 # Environment / Secrets
-# =========================
+# =====================================================
+
 .env
-.env.local
-.env.development
-.env.test
-.env.production
-.local-*
+.env.*
+!.env.example
 
-# Secrets (NEVER commit)
-**/src/main/resources/application-*.properties
-!**/src/main/resources/application-example.properties
-**/src/main/resources/*.jks
-**/src/main/resources/*.p12
-**/src/main/resources/*.crt
-**/src/main/resources/*.key
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
 
-# =========================
-# MongoDB (CRITICAL FIX)
-# =========================
+# Spring profiles
+**/src/main/resources/application-local.properties
+**/src/main/resources/application-dev.properties
+**/src/main/resources/application-prod.properties
+**/src/main/resources/application-secret.properties
+
+# =====================================================
+# Docker / Local Data
+# =====================================================
+
+docker-data/
+volume-data/
+
+# MySQL data
+**/mysql/data/
+**/docker/mysql/data/
+order-service/mysql/
+
+# MongoDB data
 **/data/db/
-**/data/
 **/journal/
 **/diagnostic.data/
-
 WiredTiger*
-*.wt
-*.ns
-*.0
-*.1
-*.2
-*.lock
 mongod.lock
 
-# =========================
 # Kafka
-# =========================
 **/kafka-logs/
 **/zookeeper/
 
-# =========================
-# Docker
-# =========================
-.docker/
-docker-data/
-*.dockerignore
-!docker-compose*.yml
-
-# =========================
-# Kubernetes
-# =========================
-k8s/
-*.yaml
-*.yml
-!k8s/example-*.yaml
-!docker-compose*.yml
-
-# =========================
-# Spring Boot
-# =========================
-/heapdump/
-heapdump.hprof
-
-# =========================
+# =====================================================
 # Testing
-# =========================
-**/test-output/
+# =====================================================
+
 **/surefire-reports/
 **/failsafe-reports/
+**/test-output/
 
-# =========================
-# IDE generated / misc
-# =========================
-.apt_generated/
-.factorypath
-.springBeans
-.sts4-cache/
+# =====================================================
+# JVM
+# =====================================================
 
-# =========================
-# Keep empty dirs
-# =========================
+*.hprof
+heapdump.hprof
+
+# =====================================================
+# Archives
+# =====================================================
+
+*.zip
+*.tar
+*.gz
+*.7z
+
+# =====================================================
+# Keep placeholder files
+# =====================================================
+
 !.gitkeep

@@ -24,7 +24,6 @@
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 	</properties>
 
-
 	<dependencies>
 
 		<!-- Spring Cloud Gateway (WebFlux) -->
@@ -33,13 +32,6 @@
 			<artifactId>spring-cloud-starter-gateway</artifactId>
 		</dependency>
 
-		<dependency>
-			<groupId>org.springdoc</groupId>
-			<artifactId>springdoc-openapi-starter-webflux-api</artifactId>
-			<version>2.5.0</version>
-		</dependency>
-
-
 		<!-- Swagger/OpenAPI for WebFlux Gateway -->
 		<dependency>
 			<groupId>org.springdoc</groupId>
@@ -47,22 +39,17 @@
 			<version>2.5.0</version>
 		</dependency>
 
-
-		<!-- Resilience4j Circuit Breaker -->
-		<dependency>
-			<groupId>org.springframework.cloud</groupId>
-			<artifactId>
-				spring-cloud-starter-circuitbreaker-resilience4j
-			</artifactId>
-		</dependency>
-
-
 		<!-- Actuator -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
 
+		<!-- Prometheus -->
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-registry-prometheus</artifactId>
+		</dependency>
 
 		<!-- Testing -->
 		<dependency>
@@ -72,7 +59,6 @@
 		</dependency>
 
 	</dependencies>
-
 
 	<dependencyManagement>
 		<dependencies>
@@ -88,7 +74,6 @@
 		</dependencies>
 	</dependencyManagement>
 
-
 	<build>
 		<plugins>
 
@@ -96,7 +81,6 @@
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
-
 
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>

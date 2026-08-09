@@ -18,30 +18,53 @@ public class RequestLoggingFilter implements GlobalFilter {
 	private static final String CORRELATION_ID = "Correlation-Id";
 
 	@Override
-	public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+	public Mono<Void> filter(
+			ServerWebExchange exchange,
+			GatewayFilterChain chain) {
 
 		String correlationId = exchange.getRequest()
-		                       .getHeaders()
-		                       .getFirst(CORRELATION_ID);
+				.getHeaders()
+				.getFirst(CORRELATION_ID);
 
 		if (correlationId == null) {
 			correlationId = UUID.randomUUID().toString();
 		}
 
-		String path = exchange.getRequest().getURI().getPath();
-		String method = exchange.getRequest().getMethod().name();
+		String path = exchange.getRequest()
+				.getURI()
+				.getPath();
 
-		log.info("Incoming Request: {} {} | CorrelationId: {}",
-		         method,
-		         path,
-		         correlationId
-		        );
+		String method = exchange.getRequest()
+				.getMethod()
+				.name();
 
-		// attach correlation id to response headers
+		log.info(
+			"Incoming Request: {} {} | CorrelationId: {}",
+			method,
+			path,
+			correlationId
+		);
+
 		exchange.getResponse()
-		.getHeaders()
-		.add(CORRELATION_ID, correlationId);
+				.getHeaders()
+				.add(
+					CORRELATION_ID,
+					correlationId
+				);
 
-		return chain.filter(exchange);
+		ServerWebExchange modifiedExchange =
+				exchange.mutate()
+						.request(
+							exchange.getRequest()
+							.mutate()
+							.header(
+								CORRELATION_ID,
+								correlationId
+							)
+							.build()
+						)
+						.build();
+
+		return chain.filter(modifiedExchange);
 	}
 }
