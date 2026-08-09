@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.*;
     description = "Manage inventory operations"
 )
 @RestController
-@RequestMapping("/api/inventory")
+// @RequestMapping("/api/inventory")
 @RequiredArgsConstructor
 public class InventoryController {
 

@@ -20,7 +20,7 @@ import java.util.List;
     description = "Manage products and inventory synchronization"
 )
 @RestController
-@RequestMapping("/api/product")
+// @RequestMapping("/api/product")
 @RequiredArgsConstructor
 public class ProductController {
 

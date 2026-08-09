@@ -14,6 +14,7 @@ x-healthcheck: &default-healthcheck
     interval: 10s
     timeout: 5s
     retries: 10
+    start_period: 20s
 
 services:
     mongodb:
@@ -28,8 +29,8 @@ services:
         environment:
             MONGO_INITDB_ROOT_USERNAME: "${MONGO_ROOT_USERNAME}"
             MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
-        ports:
-            - "${MONGO_PORT}:27017"
+        expose:
+            - "${MONGO_PORT}"
         volumes:
             - mongodb-data:/data/db
         deploy:
@@ -48,19 +49,15 @@ services:
             <<: *default-healthcheck
             test:
                 [
-                    "CMD",
-                    "mysqladmin",
-                    "ping",
-                    "-h",
-                    "localhost",
-                    "-p${MYSQL_ROOT_PASSWORD}",
+                    "CMD-SHELL",
+                    'mysqladmin ping -h localhost -u root -p"$$(cat /run/secrets/mysql_root_password)"',
                 ]
         secrets:
             - mysql_root_password
         environment:
             MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
-        ports:
-            - "${MYSQL_PORT}:3306"
+        expose:
+            - "${MYSQL_PORT}"
         volumes:
             - mysql-data:/var/lib/mysql
             - ./mysql:/docker-entrypoint-initdb.d:ro
@@ -91,8 +88,8 @@ services:
             KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
             CLUSTER_ID: "5L6g3nShT-eMCtK--X86sw"
 
-        ports:
-            - "9092:9092"
+        expose:
+            - "${KAFKA_PORT}"
         volumes:
             - kafka-data:/var/lib/kafka/data
         healthcheck:
@@ -151,10 +148,12 @@ services:
         environment:
             SERVER_PORT: ${PRODUCT_SERVICE_PORT}
             SPRING_DATA_MONGODB_URI: >-
-                mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongodb:27017/product-service?authSource=admin
+                mongodb://${MONGO_ROOT_USERNAME}:__MONGO_PASSWORD__@mongodb:27017/product-service?authSource=admin
             INVENTORY_SERVICE_URL: "http://inventory-service:${INVENTORY_SERVICE_PORT}"
+        secrets:
+            - mongo_root_password
         expose:
-            - "8082"
+            - "${PRODUCT_SERVICE_PORT}"
         healthcheck:
             <<: *default-healthcheck
             test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
@@ -180,9 +179,11 @@ services:
             SERVER_PORT: ${INVENTORY_SERVICE_PORT}
             SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/${INVENTORY_DATABASE}"
             SPRING_DATASOURCE_USERNAME: root
-            SPRING_DATASOURCE_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+            # SPRING_DATASOURCE_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+        secrets:
+            - mysql_root_password
         expose:
-            - "8081"
+            - "${INVENTORY_SERVICE_PORT}"
         healthcheck:
             <<: *default-healthcheck
             test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
@@ -210,11 +211,14 @@ services:
             SERVER_PORT: ${ORDER_SERVICE_PORT}
             SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/${ORDER_DATABASE}"
             SPRING_DATASOURCE_USERNAME: root
-            SPRING_DATASOURCE_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+            # SPRING_DATASOURCE_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
             INVENTORY_SERVICE_URL: "http://inventory-service:${INVENTORY_SERVICE_PORT}"
             SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:${KAFKA_PORT}"
+
+        secrets:
+            - mysql_root_password
         expose:
-            - "8083"
+            - "${ORDER_SERVICE_PORT}"
         healthcheck:
             <<: *default-healthcheck
             test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]

@@ -13,13 +13,13 @@ import org.springframework.web.bind.annotation.*;
 )
 public interface InventoryClient {
 
-	@PostMapping("/api/inventory")
+	@PostMapping
 	ResponseEntity<InventoryResponse> upsertInventory(
-	    @RequestBody InventoryRequest inventoryRequest
+		@RequestBody InventoryRequest inventoryRequest
 	);
 
-	@GetMapping("/api/inventory/{skuCode}")
+	@GetMapping("/{skuCode}")
 	ResponseEntity<InventoryResponse> getInventoryBySkuCode(
-	    @PathVariable String skuCode
+		@PathVariable String skuCode
 	);
 }
