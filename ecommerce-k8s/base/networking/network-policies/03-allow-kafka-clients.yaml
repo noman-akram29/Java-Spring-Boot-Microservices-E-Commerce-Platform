@@ -1,22 +1,33 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-kafka-clients
-  namespace: ecommerce
+    name: allow-kafka-clients
+    namespace: ecommerce
 spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: kafka
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: order-service
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: notification-service
-      ports:
-        - protocol: TCP
-          port: 9092
+    podSelector:
+        matchLabels:
+            app.kubernetes.io/name: kafka
+    policyTypes:
+        - Ingress
+    ingress:
+        # Application clients
+        - from:
+              - podSelector:
+                    matchLabels:
+                        app.kubernetes.io/name: order-service
+              - podSelector:
+                    matchLabels:
+                        app.kubernetes.io/name: notification-service
+          ports:
+              - protocol: TCP
+                port: 9092
+        # Inter-broker and controller quorum (kafka → kafka)
+        - from:
+              - podSelector:
+                    matchLabels:
+                        app.kubernetes.io/name: kafka
+          ports:
+              - protocol: TCP
+                port: 9092
+              - protocol: TCP
+                port: 9093

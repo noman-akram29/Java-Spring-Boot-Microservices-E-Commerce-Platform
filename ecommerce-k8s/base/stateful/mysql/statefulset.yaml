@@ -1,60 +1,97 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: mysql
-  namespace: ecommerce
+    name: mysql
+    namespace: ecommerce
 spec:
-  serviceName: mysql
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: mysql
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: mysql
-        workload: data
-        tier: stateful
-    spec:
-      nodeSelector:
-        workload: data
-      tolerations:
-        - key: workload
-          operator: Equal
-          value: data
-          effect: NoSchedule
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 999
-        runAsGroup: 999
-        fsGroup: 999
-        seccompProfile:
-          type: RuntimeDefault
-      containers:
-        - name: mysql
-          image: mysql:8.4
-          env:
-            - name: MYSQL_ROOT_PASSWORD
-              valueFrom:
-                secretKeyRef: { name: mysql-creds, key: password }
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-          ports: [{ containerPort: 3306 }]
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/mysql
-          resources:
-            requests: { cpu: "250m", memory: "512Mi" }
-            limits: { cpu: "1000m", memory: "1Gi" }
-          readinessProbe:
-            exec:
-              command: ["mysqladmin", "ping", "-h", "localhost"]
-            periodSeconds: 10
-  volumeClaimTemplates:
-    - metadata: { name: data }
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests: { storage: 2Gi }
+    serviceName: mysql
+    replicas: 1
+    selector:
+        matchLabels:
+            app.kubernetes.io/name: mysql
+    template:
+        metadata:
+            labels:
+                app.kubernetes.io/name: mysql
+                workload: data
+                tier: stateful
+        spec:
+            nodeSelector:
+                workload: data
+            tolerations:
+                - key: workload
+                  operator: Equal
+                  value: data
+                  effect: NoSchedule
+            securityContext:
+                runAsNonRoot: true
+                runAsUser: 999
+                runAsGroup: 999
+                fsGroup: 999
+                seccompProfile:
+                    type: RuntimeDefault
+            containers:
+                - name: mysql
+                  image: "mysql:8.4"
+                  imagePullPolicy: IfNotPresent
+                  env:
+                      - name: MYSQL_ROOT_PASSWORD
+                        valueFrom:
+                            secretKeyRef:
+                                name: mysql-creds
+                                key: password
+                  securityContext:
+                      allowPrivilegeEscalation: false
+                      capabilities:
+                          drop:
+                              - ALL
+                  ports:
+                      - containerPort: 3306
+                  volumeMounts:
+                      - name: data
+                        mountPath: /var/lib/mysql
+                  resources:
+                      requests:
+                          cpu: 250m
+                          memory: 512Mi
+                      limits:
+                          cpu: 1000m
+                          memory: 1Gi
+                  startupProbe:
+                      exec:
+                          command:
+                              - /bin/sh
+                              - -c
+                              - mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -p"$MYSQL_ROOT_PASSWORD"
+                      failureThreshold: 30
+                      periodSeconds: 10
+                      timeoutSeconds: 5
+                  readinessProbe:
+                      exec:
+                          command:
+                              - /bin/sh
+                              - -c
+                              - mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -p"$MYSQL_ROOT_PASSWORD"
+                      initialDelaySeconds: 10
+                      periodSeconds: 10
+                      timeoutSeconds: 5
+                      failureThreshold: 3
+                  livenessProbe:
+                      exec:
+                          command:
+                              - /bin/sh
+                              - -c
+                              - mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -p"$MYSQL_ROOT_PASSWORD"
+                      initialDelaySeconds: 30
+                      periodSeconds: 20
+                      timeoutSeconds: 5
+                      failureThreshold: 3
+    volumeClaimTemplates:
+        - metadata:
+              name: data
+          spec:
+              accessModes:
+                  - ReadWriteOnce
+              resources:
+                  requests:
+                      storage: 2Gi

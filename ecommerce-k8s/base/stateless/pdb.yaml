@@ -1,54 +1,98 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: api-gateway-pdb
-  namespace: ecommerce
+    name: api-gateway-pdb
+    namespace: ecommerce
 spec:
-  minAvailable: 2
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: api-gateway
+    minAvailable: 2
+    selector:
+        matchLabels:
+            app.kubernetes.io/name: api-gateway
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: inventory-service-pdb
-  namespace: ecommerce
+    name: inventory-service-pdb
+    namespace: ecommerce
 spec:
-  minAvailable: 2
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: inventory-service
+    minAvailable: 2
+    selector:
+        matchLabels:
+            app.kubernetes.io/name: inventory-service
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: product-service-pdb
-  namespace: ecommerce
+    name: product-service-pdb
+    namespace: ecommerce
 spec:
-  minAvailable: 2
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: product-service
+    minAvailable: 2
+    selector:
+        matchLabels:
+            app.kubernetes.io/name: product-service
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: order-service-pdb
-  namespace: ecommerce
+    name: order-service-pdb
+    namespace: ecommerce
 spec:
-  minAvailable: 2
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: order-service
+    minAvailable: 2
+    selector:
+        matchLabels:
+            app.kubernetes.io/name: order-service
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: notification-service-pdb
-  namespace: ecommerce
+    name: notification-service-pdb
+    namespace: ecommerce
 spec:
-  minAvailable: 2
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: notification-service
+    minAvailable: 2
+    selector:
+        matchLabels:
+            app.kubernetes.io/name: notification-service
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+    name: mysql-pdb
+    namespace: ecommerce
+spec:
+    maxUnavailable: 0 # Single replica → never voluntarily disrupt it
+    selector:
+        matchLabels:
+            app.kubernetes.io/name: mysql
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+    name: mongodb-pdb
+    namespace: ecommerce
+spec:
+    maxUnavailable: 0
+    selector:
+        matchLabels:
+            app.kubernetes.io/name: mongodb
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+    name: kafka-pdb
+    namespace: ecommerce
+spec:
+    maxUnavailable: 1 # 2 replicas → allow one disruption
+    selector:
+        matchLabels:
+            app.kubernetes.io/name: kafka
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+    name: mailpit-pdb
+    namespace: ecommerce
+spec:
+    minAvailable: 1
+    selector:
+        matchLabels:
+            app.kubernetes.io/name: mailpit

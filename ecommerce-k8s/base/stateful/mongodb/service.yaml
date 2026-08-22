@@ -1,7 +1,11 @@
 apiVersion: v1
 kind: Service
-metadata: { name: mongodb, namespace: ecommerce }
+metadata:
+    name: mongodb
+    namespace: ecommerce
 spec:
-  clusterIP: None
-  selector: { app.kubernetes.io/name: mongodb }
-  ports: [{ port: 27017 }]
+    clusterIP: None
+    selector:
+        app.kubernetes.io/name: mongodb
+    ports:
+        - port: 27017

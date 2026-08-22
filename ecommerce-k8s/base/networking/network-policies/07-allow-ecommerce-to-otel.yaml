@@ -1,23 +1,23 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-ecommerce-to-otel
-  namespace: monitoring
+    name: allow-ecommerce-to-otel
+    namespace: monitoring
 spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/instance: otel-collector
+    podSelector:
+        matchLabels:
+            app.kubernetes.io/instance: otel-collector
 
-  policyTypes:
-    - Ingress
+    policyTypes:
+        - Ingress
 
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ecommerce
-      ports:
-        - protocol: TCP
-          port: 4317
-        - protocol: TCP
-          port: 4318
+    ingress:
+        - from:
+              - namespaceSelector:
+                    matchLabels:
+                        kubernetes.io/metadata.name: ecommerce
+          ports:
+              - protocol: TCP
+                port: 4317
+              - protocol: TCP
+                port: 4318

@@ -1,21 +1,21 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: ecommerce-services
-  namespace: ecommerce
-  labels:
-    observability: enabled
+    name: ecommerce-services
+    namespace: ecommerce
+    labels:
+        observability: enabled
 spec:
-  selector:
-    matchLabels:
-      observability: enabled
+    selector:
+        matchLabels:
+            observability: enabled
 
-  namespaceSelector:
-    matchNames:
-      - ecommerce
+    namespaceSelector:
+        matchNames:
+            - ecommerce
 
-  endpoints:
-    - port: http
-      path: /actuator/prometheus
-      interval: 15s
-      scrapeTimeout: 10s
+    endpoints:
+        - port: http
+          path: /actuator/prometheus
+          interval: 15s
+          scrapeTimeout: 10s
