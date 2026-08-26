@@ -1,20 +1,18 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-    name: allow-gateway-to-backends
+    name: allow-gateway-to-inventory
     namespace: ecommerce
 spec:
     podSelector:
-        matchExpressions:
-            - key: app.kubernetes.io/name
-              operator: In
-              values:
-                  - inventory-service
-                  - order-service
-                  - product-service
+        matchLabels:
+            app.kubernetes.io/name: inventory-service
+
     policyTypes:
         - Ingress
+
     ingress:
+        # API Gateway -> Inventory
         - from:
               - podSelector:
                     matchLabels:
@@ -22,17 +20,69 @@ spec:
           ports:
               - protocol: TCP
                 port: 8081
-              - protocol: TCP
-                port: 8083
-              - protocol: TCP
-                port: 8082
+
+        # Order -> Inventory
         - from:
               - podSelector:
                     matchLabels:
                         app.kubernetes.io/name: order-service
-              - podSelector:
-                    matchLabels:
-                        app.kubernetes.io/name: product-service
+
           ports:
               - protocol: TCP
                 port: 8081
+
+        # Product -> Inventory
+        - from:
+              - podSelector:
+                    matchLabels:
+                        app.kubernetes.io/name: product-service
+
+          ports:
+              - protocol: TCP
+                port: 8081
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+    name: allow-gateway-to-product
+    namespace: ecommerce
+spec:
+    podSelector:
+        matchLabels:
+            app.kubernetes.io/name: product-service
+
+    policyTypes:
+        - Ingress
+
+    ingress:
+        # API Gateway -> Product
+        - from:
+              - podSelector:
+                    matchLabels:
+                        app.kubernetes.io/name: api-gateway
+          ports:
+              - protocol: TCP
+                port: 8082
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+    name: allow-gateway-to-order
+    namespace: ecommerce
+spec:
+    podSelector:
+        matchLabels:
+            app.kubernetes.io/name: order-service
+
+    policyTypes:
+        - Ingress
+
+    ingress:
+        # API Gateway -> Order
+        - from:
+              - podSelector:
+                    matchLabels:
+                        app.kubernetes.io/name: api-gateway
+          ports:
+              - protocol: TCP
+                port: 8083
