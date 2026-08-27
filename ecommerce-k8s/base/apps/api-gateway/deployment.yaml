@@ -129,11 +129,10 @@ spec:
                   resources:
                       requests:
                           cpu: "250m"
-                          memory: "256Mi"
+                          memory: "384Mi"
                       limits:
                           cpu: "1000m"
-                          memory: "768Mi"
-
+                          memory: "1024Mi"
             volumes:
                 - name: tmp
                   emptyDir: {}
