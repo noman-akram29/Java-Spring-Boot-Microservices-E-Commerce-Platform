@@ -2,7 +2,6 @@ package com.techie.microservices.inventory.controller;
 
 import com.techie.microservices.inventory.dto.InventoryRequest;
 import com.techie.microservices.inventory.dto.InventoryResponse;
-import com.techie.microservices.inventory.repository.InventoryRepository;
 import com.techie.microservices.inventory.service.InventoryService;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -20,44 +19,53 @@ import org.springframework.web.bind.annotation.*;
     description = "Manage inventory operations"
 )
 @RestController
-// @RequestMapping("/api/inventory")
 @RequiredArgsConstructor
 public class InventoryController {
 
 	private final InventoryService inventoryService;
-	private final InventoryRepository inventoryRepository;
 
-	@GetMapping
-	@ResponseStatus(HttpStatus.OK)
-	public boolean isInStock(@RequestParam String skuCode, @RequestParam Integer quantity) {
-		return inventoryService.isInStock(skuCode, quantity);
-	}
+	@Operation(summary = "Check product stock availability")
+    @GetMapping
+    public boolean isInStock(
+        @RequestParam String skuCode,
+        @RequestParam Integer quantity
+    ) {
+        return inventoryService.isInStock(skuCode, quantity);
+    }
 
-	@GetMapping("/health")
-	public String health() {
-		return "UP";
-	}
+	@Operation(summary = "Check the health of the inventory service")
+    @GetMapping("/health")
+    public String health() {
+        return "UP";
+    }
 
-	@PostMapping
-	public ResponseEntity<InventoryResponse> upsertInventory(@Valid @RequestBody InventoryRequest request) {
+ 	@Operation(summary = "Create or update inventory")
+    @PostMapping
+    public ResponseEntity<InventoryResponse> upsertInventory(
+        @Valid @RequestBody InventoryRequest request
+    ) {
+        return ResponseEntity.ok(
+            inventoryService.upsertInventory(request)
+        );
+    }
 
-		boolean isNew = inventoryRepository.findBySkuCode(request.skuCode()).isEmpty();
+	@Operation(summary = "Get inventory by SKU code")
+    @GetMapping("/{skuCode}")
+    public ResponseEntity<InventoryResponse> getInventoryBySkuCode(
+        @PathVariable String skuCode
+    ) {
+        return ResponseEntity.ok(
+            inventoryService.getInventoryBySkuCode(skuCode)
+        );
+    }
 
-		InventoryResponse response = inventoryService.upsertInventory(request);
-
-		return isNew
-		       ? ResponseEntity.status(HttpStatus.CREATED).body(response)
-		       : ResponseEntity.ok(response);
-	}
-
-	@GetMapping("/{skuCode}")
-	public ResponseEntity<InventoryResponse> getInventoryBySkuCode(@PathVariable String skuCode) {
-		return ResponseEntity.ok(inventoryService.getInventoryBySkuCode(skuCode));
-	}
-
-	@PostMapping("/decrease")
-	public ResponseEntity<InventoryResponse> decreaseInventory(
-	    @Valid @RequestBody InventoryRequest request) {
-		return ResponseEntity.ok(inventoryService.decreaseInventory(request));
-	}
+	@Operation(summary = "Decrease inventory")
+    @PostMapping("/decrease")
+    public ResponseEntity<InventoryResponse> decreaseInventory(
+        @Valid @RequestBody InventoryRequest request
+    ) {
+        return ResponseEntity.ok(
+            inventoryService.decreaseInventory(request)
+        );
+    }
 }

@@ -15,28 +15,32 @@ import org.springframework.web.bind.annotation.*;
 
 @Tag(
     name = "Order API",
-    description = "Manage Orders synchronization"
+    description = "Manage Orders"
 )
 @RestController
-// @RequestMapping("/api/order")
 @RequiredArgsConstructor
 public class OrderController {
 
 	private final OrderService orderService;
-	@Operation(summary = "Create a new order")
-	@GetMapping("/")
-	public String home() {
-		return "Order Service is running...";
-	}
 
-	@GetMapping("/health")
-	public String health() {
-		return "UP";
-	}
+	@Operation(summary = "Check if the order service is running")
+    @GetMapping("/")
+    public String home() {
+        return "Order Service is running...";
+    }
 
-	@PostMapping
-	@ResponseStatus(HttpStatus.CREATED)
-	public OrderResponse placeOrder(@Valid @RequestBody OrderRequest orderRequest) {
-		return orderService.placeOrder(orderRequest);
-	}
+    @Operation(summary = "Check the health of the order service")
+    @GetMapping("/health")
+    public String health() {
+        return "UP";
+    }
+
+    @Operation(summary = "Create a new order")
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    public OrderResponse placeOrder(
+		@Valid @RequestBody OrderRequest orderRequest
+	) {
+        return orderService.placeOrder(orderRequest);
+    }
 }

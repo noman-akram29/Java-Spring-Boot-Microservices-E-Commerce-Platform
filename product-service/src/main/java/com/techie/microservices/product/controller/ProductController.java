@@ -20,7 +20,6 @@ import java.util.List;
     description = "Manage products and inventory synchronization"
 )
 @RestController
-// @RequestMapping("/api/product")
 @RequiredArgsConstructor
 public class ProductController {
 
@@ -36,9 +35,8 @@ public class ProductController {
 	}
 
 	@Operation(summary = "Get all products with inventory details")
-	@GetMapping
-	@ResponseStatus(HttpStatus.OK)
-	public List<ProductResponse> getAllProducts() {
-		return productService.getAllProducts();
-	}
+    @GetMapping
+    public List<ProductResponse> getAllProducts() {
+        return productService.getAllProducts();
+    }
 }
