@@ -1,0 +1,88 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+    name: allow-gateway-to-inventory
+    namespace: ecommerce
+spec:
+    podSelector:
+        matchLabels:
+            app.kubernetes.io/name: inventory-service
+
+    policyTypes:
+        - Ingress
+
+    ingress:
+        # API Gateway -> Inventory
+        - from:
+              - podSelector:
+                    matchLabels:
+                        app.kubernetes.io/name: api-gateway
+          ports:
+              - protocol: TCP
+                port: 8081
+
+        # Order -> Inventory
+        - from:
+              - podSelector:
+                    matchLabels:
+                        app.kubernetes.io/name: order-service
+
+          ports:
+              - protocol: TCP
+                port: 8081
+
+        # Product -> Inventory
+        - from:
+              - podSelector:
+                    matchLabels:
+                        app.kubernetes.io/name: product-service
+
+          ports:
+              - protocol: TCP
+                port: 8081
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+    name: allow-gateway-to-product
+    namespace: ecommerce
+spec:
+    podSelector:
+        matchLabels:
+            app.kubernetes.io/name: product-service
+
+    policyTypes:
+        - Ingress
+
+    ingress:
+        # API Gateway -> Product
+        - from:
+              - podSelector:
+                    matchLabels:
+                        app.kubernetes.io/name: api-gateway
+          ports:
+              - protocol: TCP
+                port: 8082
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+    name: allow-gateway-to-order
+    namespace: ecommerce
+spec:
+    podSelector:
+        matchLabels:
+            app.kubernetes.io/name: order-service
+
+    policyTypes:
+        - Ingress
+
+    ingress:
+        # API Gateway -> Order
+        - from:
+              - podSelector:
+                    matchLabels:
+                        app.kubernetes.io/name: api-gateway
+          ports:
+              - protocol: TCP
+                port: 8083

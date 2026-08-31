@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+    name: allow-mysql-clients
+    namespace: ecommerce
+spec:
+    podSelector:
+        matchLabels:
+            app.kubernetes.io/name: mysql
+    policyTypes:
+        - Ingress
+    ingress:
+        - from:
+              - podSelector:
+                    matchLabels:
+                        app.kubernetes.io/name: inventory-service
+              - podSelector:
+                    matchLabels:
+                        app.kubernetes.io/name: order-service
+          ports:
+              - protocol: TCP
+                port: 3306

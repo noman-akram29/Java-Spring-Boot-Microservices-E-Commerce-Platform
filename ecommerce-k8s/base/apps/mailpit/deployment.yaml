@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: mailpit
+    namespace: ecommerce
+    labels:
+        app.kubernetes.io/name: mailpit
+        app.kubernetes.io/part-of: ecommerce
+        app.kubernetes.io/component: messaging
+        workload: application
+        tier: stateless
+
+spec:
+    replicas: 2
+    strategy:
+        type: RollingUpdate
+        rollingUpdate:
+            maxUnavailable: 0
+            maxSurge: 1
+    selector:
+        matchLabels:
+            app.kubernetes.io/name: mailpit
+
+    template:
+        metadata:
+            labels:
+                app.kubernetes.io/name: mailpit
+                app.kubernetes.io/part-of: ecommerce
+                app.kubernetes.io/component: messaging
+                workload: application
+                tier: stateless
+
+        spec:
+            serviceAccountName: mailpit-sa
+
+            securityContext:
+                runAsNonRoot: true
+                runAsUser: 1001
+                runAsGroup: 1001
+                fsGroup: 1001
+                seccompProfile:
+                    type: RuntimeDefault
+
+            terminationGracePeriodSeconds: 30
+
+            affinity:
+                nodeAffinity:
+                    preferredDuringSchedulingIgnoredDuringExecution:
+                        - weight: 100
+                          preference:
+                              matchExpressions:
+                                  - key: workload
+                                    operator: In
+                                    values:
+                                        - application
+                podAntiAffinity:
+                    preferredDuringSchedulingIgnoredDuringExecution:
+                        - weight: 100
+                          podAffinityTerm:
+                              topologyKey: kubernetes.io/hostname
+                              labelSelector:
+                                  matchLabels:
+                                      app.kubernetes.io/name: mailpit
+            topologySpreadConstraints:
+                - maxSkew: 1
+                  topologyKey: kubernetes.io/hostname
+                  whenUnsatisfiable: ScheduleAnyway
+                  labelSelector:
+                      matchLabels:
+                          app.kubernetes.io/name: mailpit
+
+            containers:
+                - name: mailpit
+                  image: axllent/mailpit:v1.30.0
+                  imagePullPolicy: IfNotPresent
+                  ports:
+                      - name: ui
+                        containerPort: 8025
+                      - name: smtp
+                        containerPort: 1025
+
+                  securityContext:
+                      allowPrivilegeEscalation: false
+                      capabilities:
+                          drop:
+                              - ALL
+                      readOnlyRootFilesystem: true
+
+                  volumeMounts:
+                      - name: tmp
+                        mountPath: /tmp
+
+                  readinessProbe:
+                      httpGet:
+                          path: /readyz
+                          port: 8025
+                      initialDelaySeconds: 5
+                      periodSeconds: 10
+
+                  livenessProbe:
+                      httpGet:
+                          path: /livez
+                          port: 8025
+                      initialDelaySeconds: 10
+                      periodSeconds: 15
+
+                  resources:
+                      requests:
+                          cpu: "50m"
+                          memory: "32Mi"
+                      limits:
+                          cpu: "250m"
+                          memory: "128Mi"
+
+            volumes:
+                - name: tmp
+                  emptyDir: {}

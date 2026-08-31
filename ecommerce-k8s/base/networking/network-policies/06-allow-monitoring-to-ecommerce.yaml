@@ -1,0 +1,32 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+    name: allow-monitoring-to-ecommerce
+    namespace: ecommerce
+spec:
+    podSelector:
+        matchLabels:
+            observability: enabled
+    policyTypes:
+        - Ingress
+    ingress:
+        - from:
+              - namespaceSelector:
+                    matchLabels:
+                        kubernetes.io/metadata.name: monitoring
+          ports:
+              # api-gateway
+              - protocol: TCP
+                port: 8080
+              # inventory-service
+              - protocol: TCP
+                port: 8081
+              # product-service
+              - protocol: TCP
+                port: 8082
+              # order-service
+              - protocol: TCP
+                port: 8083
+              # notification-service
+              - protocol: TCP
+                port: 8084

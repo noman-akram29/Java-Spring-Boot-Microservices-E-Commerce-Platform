@@ -23,14 +23,22 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B --no-transfer-progress clean package -DskipTests
 
+# Download OpenTelemetry Java agent
+ARG OTEL_AGENT_VERSION=2.28.1
+
+RUN mkdir -p /workspace/otel \
+    && curl -fL \
+    -o /workspace/otel/opentelemetry-javaagent.jar \
+    https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v${OTEL_AGENT_VERSION}/opentelemetry-javaagent.jar
+
 ############################################
 # Runtime Stage
 ############################################
 FROM eclipse-temurin:21-jre-jammy
 
 # OCI Image Metadata
-LABEL org.opencontainers.image.title="api-gateway" \
-    org.opencontainers.image.description="Spring Boot Application - API Gateway" \
+LABEL org.opencontainers.image.title="inventory-service" \
+    org.opencontainers.image.description="Spring Boot Application - Inventory Service" \
     org.opencontainers.image.vendor="NULL"
 
 WORKDIR /app
@@ -44,11 +52,14 @@ RUN groupadd --gid 1001 spring && \
 # Copy executable JAR
 COPY --from=build --chown=spring:spring /workspace/target/*.jar app.jar
 
+# OpenTelemetry Java agent
+COPY --from=build --chown=spring:spring /workspace/otel/opentelemetry-javaagent.jar /otel/opentelemetry-javaagent.jar
+
 COPY --chmod=755 entrypoint.sh /app/entrypoint.sh
 
 USER spring:spring
 
-EXPOSE 8080
+EXPOSE 8081
 
 # Uncomment if Spring Boot Actuator is enabled
 # HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

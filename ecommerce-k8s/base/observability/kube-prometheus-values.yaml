@@ -1,0 +1,57 @@
+grafana:
+    adminUser: admin
+    adminPassword: "admin"
+
+    persistence:
+        enabled: false
+
+    additionalDataSources:
+        - name: Loki
+          type: loki
+          access: proxy
+          url: http://loki.monitoring.svc.cluster.local:3100
+          isDefault: false
+
+        - name: Tempo
+          type: tempo
+          access: proxy
+          url: http://tempo.monitoring.svc.cluster.local:3200
+          isDefault: false
+          jsonData:
+              tracesToLogs:
+                  datasourceUid: Loki
+                  tags:
+                      - namespace
+                      - pod
+                      - container
+              serviceMap:
+                  datasourceUid: Prometheus
+
+prometheus:
+    prometheusSpec:
+        serviceMonitorSelectorNilUsesHelmValues: false
+        serviceMonitorNamespaceSelector: {}
+
+        resources:
+            requests:
+                cpu: 100m
+                memory: 512Mi
+            limits:
+                cpu: 500m
+                memory: 1Gi
+
+alertmanager:
+    alertmanagerSpec:
+        resources:
+            requests:
+                cpu: 25m
+                memory: 64Mi
+            limits:
+                cpu: 100m
+                memory: 128Mi
+
+kubeStateMetrics:
+    enabled: true
+
+nodeExporter:
+    enabled: true
