@@ -23,6 +23,14 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B --no-transfer-progress clean package -DskipTests
 
+# Download OpenTelemetry Java agent
+ARG OTEL_AGENT_VERSION=2.28.1
+
+RUN mkdir -p /workspace/otel \
+    && curl -fL \
+    -o /workspace/otel/opentelemetry-javaagent.jar \
+    https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v${OTEL_AGENT_VERSION}/opentelemetry-javaagent.jar
+
 ############################################
 # Runtime Stage
 ############################################
@@ -43,6 +51,9 @@ RUN groupadd --gid 1001 spring && \
 
 # Copy executable JAR
 COPY --from=build --chown=spring:spring /workspace/target/*.jar app.jar
+
+# OpenTelemetry Java agent
+COPY --from=build --chown=spring:spring /workspace/otel/opentelemetry-javaagent.jar /otel/opentelemetry-javaagent.jar
 
 COPY --chmod=755 entrypoint.sh /app/entrypoint.sh
 
