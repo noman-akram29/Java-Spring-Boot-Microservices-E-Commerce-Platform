@@ -74,7 +74,7 @@ spec:
                           app.kubernetes.io/name: api-gateway
             containers:
                 - name: api-gateway
-                  image: "nomanakram29/api-gateway:v2"
+                  image: "nomanakram29/api-gateway:v3"
                   imagePullPolicy: IfNotPresent
                   ports:
                       - containerPort: 8080

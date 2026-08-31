@@ -70,7 +70,7 @@ spec:
 
             containers:
                 - name: product-service
-                  image: "nomanakram29/product-service:v2"
+                  image: "nomanakram29/product-service:v3"
                   imagePullPolicy: IfNotPresent
                   ports:
                       - containerPort: 8082
