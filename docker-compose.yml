@@ -112,7 +112,8 @@ services:
 
     mailpit:
         <<: *common
-        image: axllent/mailpit:latest
+        image: axllent/mailpit:v1.31
+
         healthcheck:
             <<: *default-healthcheck
             test:
