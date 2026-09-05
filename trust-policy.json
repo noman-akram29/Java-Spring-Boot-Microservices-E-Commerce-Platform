@@ -1,0 +1,20 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Federated": "arn:aws:iam::561531407742:oidc-provider/vstoken.dev.azure.com/109fd4ab-53ef-4309-b6a1-1cdc27120c80"
+            },
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {
+                "StringEquals": {
+                    "vstoken.dev.azure.com/109fd4ab-53ef-4309-b6a1-1cdc27120c80:aud": "api://AzureADTokenExchange"
+                },
+                "StringLike": {
+                    "vstoken.dev.azure.com/109fd4ab-53ef-4309-b6a1-1cdc27120c80:sub": "sc://CareCloud-Org/Java-Spring-Boot-Microservices-E-Commerce-Platform/AWS-ECR-OIDC"
+                }
+            }
+        }
+    ]
+}

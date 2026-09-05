@@ -1,0 +1,33 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+    name: azuredevops-deployer
+    namespace: ecommerce
+rules:
+    - apiGroups:
+          - ""
+          - apps
+          - networking.k8s.io
+          - autoscaling
+          - policy
+      resources:
+          - deployments
+          - deployments/status
+          - services
+          - configmaps
+          - secrets
+          - pods
+          - pods/log
+          - pods/status
+          - replicasets
+          - ingresses
+          - horizontalpodautoscalers
+          - poddisruptionbudgets
+      verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
