@@ -5,7 +5,7 @@ metadata:
     namespace: ecommerce
 subjects:
     - kind: ServiceAccount
-      name: azuredevops-deployer
+      name: azuredevops-deployer-sa
       namespace: ecommerce
 roleRef:
     kind: Role

@@ -4,24 +4,82 @@ metadata:
     name: azuredevops-deployer
     namespace: ecommerce
 rules:
-    - apiGroups:
-          - ""
-          - apps
-          - networking.k8s.io
-          - autoscaling
-          - policy
+    # Deployments
+    - apiGroups: ["apps"]
       resources:
           - deployments
           - deployments/status
+          - replicasets
+          - replicasets/status
+      verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+
+    # Services, ConfigMaps, Secrets, Pods
+    - apiGroups: [""]
+      resources:
           - services
           - configmaps
-          - secrets
           - pods
-          - pods/log
           - pods/status
-          - replicasets
+          - pods/log
+      verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+
+    # Secrets
+    # Keep this ONLY if your deployment process really manages Secrets.
+    - apiGroups: [""]
+      resources:
+          - secrets
+      verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+
+    # Ingress
+    - apiGroups: ["networking.k8s.io"]
+      resources:
           - ingresses
+      verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+
+    # HPA
+    - apiGroups: ["autoscaling"]
+      resources:
           - horizontalpodautoscalers
+      verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+
+    # PodDisruptionBudget
+    - apiGroups: ["policy"]
+      resources:
           - poddisruptionbudgets
       verbs:
           - get
@@ -31,3 +89,4 @@ rules:
           - update
           - patch
           - delete
+ 
