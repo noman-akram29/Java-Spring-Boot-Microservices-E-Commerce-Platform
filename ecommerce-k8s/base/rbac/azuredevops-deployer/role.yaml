@@ -4,89 +4,35 @@ metadata:
     name: azuredevops-deployer
     namespace: ecommerce
 rules:
-    # Deployments
+    # Core workload resources – full lifecycle needed for rolling updates
     - apiGroups: ["apps"]
       resources:
-          - deployments
-          - deployments/status
-          - replicasets
-          - replicasets/status
-      verbs:
-          - get
-          - list
-          - watch
-          - create
-          - update
-          - patch
-          - delete
-
-    # Services, ConfigMaps, Secrets, Pods
+          [
+              "deployments",
+              "deployments/status",
+              "replicasets",
+              "replicasets/status",
+          ]
+      verbs: ["get", "list", "watch", "create", "update", "patch"]
+    # Services & ConfigMaps
     - apiGroups: [""]
-      resources:
-          - services
-          - configmaps
-          - pods
-          - pods/status
-          - pods/log
-      verbs:
-          - get
-          - list
-          - watch
-          - create
-          - update
-          - patch
-          - delete
-
-    # Secrets
-    # Keep this ONLY if your deployment process really manages Secrets.
+      resources: ["services", "configmaps"]
+      verbs: ["get", "list", "watch", "create", "update", "patch"]
+    # Secrets – read only (pipeline should not create/delete secrets)
     - apiGroups: [""]
-      resources:
-          - secrets
-      verbs:
-          - get
-          - list
-          - watch
-          - create
-          - update
-          - patch
-          - delete
-
-    # Ingress
+      resources: ["secrets"]
+      verbs: ["get", "list", "watch"]
+    # Pods – observability only
+    - apiGroups: [""]
+      resources: ["pods", "pods/log", "pods/status"]
+      verbs: ["get", "list", "watch"]
+    # Networking & scaling
     - apiGroups: ["networking.k8s.io"]
-      resources:
-          - ingresses
-      verbs:
-          - get
-          - list
-          - watch
-          - create
-          - update
-          - patch
-          - delete
-
-    # HPA
+      resources: ["ingresses"]
+      verbs: ["get", "list", "watch", "create", "update", "patch"]
     - apiGroups: ["autoscaling"]
-      resources:
-          - horizontalpodautoscalers
-      verbs:
-          - get
-          - list
-          - watch
-          - create
-          - update
-          - patch
-          - delete
-
-    # PodDisruptionBudget
+      resources: ["horizontalpodautoscalers"]
+      verbs: ["get", "list", "watch", "create", "update", "patch"]
     - apiGroups: ["policy"]
-      resources:
-          - poddisruptionbudgets
-      verbs:
-          - get
-          - list
-          - watch
-          - create
-          - update
-          - patch
-          - delete
- 
+      resources: ["poddisruptionbudgets"]
+      verbs: ["get", "list", "watch", "create", "update", "patch"]

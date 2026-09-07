@@ -1,7 +1,24 @@
+# azure-pipelines.yml
+# Production CI: Build → Push to ECR (immutable tags)
+# Uses the already-verified OIDC service connection AWS-ECR-OIDC
+
 trigger:
     branches:
         include:
             - feature/cicd
+            - main
+
+pr:
+    branches:
+        include:
+            - main
+            - feature/cicd
+
+variables:
+    AWS_REGION: ap-south-1
+    ECR_REGISTRY: 561531407742.dkr.ecr.ap-south-1.amazonaws.com
+    IMAGE_TAG: $(Build.BuildId)
+    SERVICES: api-gateway product-service inventory-service order-service notification-service
 
 pool:
     name: e-commerce-pool
@@ -9,19 +26,81 @@ pool:
         - Agent.Name -equals azuredevops-deployer
 
 steps:
+    # ------------------------------------------------
+    # 1. Checkout
+    # ------------------------------------------------
+    - checkout: self
+      clean: true
+      fetchDepth: 1
+
+    # ------------------------------------------------
+    # 2. Verify OIDC identity (same as your test)
+    # ------------------------------------------------
     - task: AWSCLI@1
       displayName: "Verify AWS OIDC identity"
       inputs:
           awsCredentials: "AWS-ECR-OIDC"
-          regionName: "ap-south-1"
+          regionName: $(AWS_REGION)
           awsCommand: "sts"
           awsSubCommand: "get-caller-identity"
 
+    # ------------------------------------------------
+    # 3. Login to ECR
+    # ------------------------------------------------
     - task: AWSCLI@1
-      displayName: "Verify ECR access"
+      displayName: "ECR Login"
       inputs:
           awsCredentials: "AWS-ECR-OIDC"
-          regionName: "ap-south-1"
+          regionName: $(AWS_REGION)
           awsCommand: "ecr"
-          awsSubCommand: "describe-repositories"
-          awsArguments: "--repository-names ecommerce/api-gateway ecommerce/product-service ecommerce/inventory-service ecommerce/order-service ecommerce/notification-service"
+          awsSubCommand: "get-login-password"
+          awsArguments: "--region $(AWS_REGION)"
+      # The output of get-login-password is captured by the next step
+
+    - script: |
+          set -euo pipefail
+          # AWSCLI@1 does not automatically pipe the password, so we re-run it cleanly
+          aws ecr get-login-password --region $(AWS_REGION) | \
+            docker login --username AWS --password-stdin $(ECR_REGISTRY)
+          echo "Successfully logged in to ECR"
+      displayName: "Docker login to ECR"
+      env:
+          AWS_DEFAULT_REGION: $(AWS_REGION)
+
+    # ------------------------------------------------
+    # 4. Build & Push all services
+    # ------------------------------------------------
+    - script: |
+          set -euo pipefail
+
+          for SERVICE in $(SERVICES); do
+            echo "================================================"
+            echo " Building & Pushing: $SERVICE"
+            echo "================================================"
+
+            DOCKER_BUILDKIT=1 docker build \
+              --tag $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) \
+              --file ${SERVICE}/Dockerfile \
+              ${SERVICE}
+
+            echo "Pushing $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)"
+            docker push $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
+
+            echo "✓ $SERVICE pushed successfully"
+          done
+
+          echo ""
+          echo "All images pushed with tag: $(IMAGE_TAG)"
+      displayName: "Build & Push all services to ECR"
+      env:
+          DOCKER_BUILDKIT: 1
+          AWS_DEFAULT_REGION: $(AWS_REGION)
+
+    # ------------------------------------------------
+    # 5. Publish the tag for later CD use
+    # ------------------------------------------------
+    - script: |
+          echo "##vso[task.setvariable variable=IMAGE_TAG;isOutput=true]$(IMAGE_TAG)"
+          echo "Exported IMAGE_TAG=$(IMAGE_TAG)"
+      name: setImageTag
+      displayName: "Export image tag"
