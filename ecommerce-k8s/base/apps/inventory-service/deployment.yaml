@@ -67,7 +67,7 @@ spec:
                           app.kubernetes.io/name: inventory-service
             containers:
                 - name: inventory-service
-                  image: "nomanakram29/inventory-service:v3"
+                  image: "561531407742.dkr.ecr.ap-south-1.amazonaws.com/ecommerce/inventory-service:v3"
                   imagePullPolicy: IfNotPresent
                   ports:
                       - containerPort: 8081

@@ -17,56 +17,81 @@ pool:
     - Agent.Name -equals azuredevops-deployer
 
 steps:
-  - checkout: self
-    clean: true
-    fetchDepth: 1
+    # ------------------------------------------------
+    # 1. Checkout
+    # ------------------------------------------------
+    - checkout: self
+      clean: true
+      fetchDepth: 1
 
-  # ------------------------------------------------
-  # 1. Verify OIDC identity
-  # ------------------------------------------------
-  - task: AWSCLI@1
-    displayName: "Verify AWS OIDC identity"
-    inputs:
-      awsCredentials: "AWS-ECR-OIDC"
-      regionName: $(AWS_REGION)
-      awsCommand: "sts"
-      awsSubCommand: "get-caller-identity"
+    # ------------------------------------------------
+    # 2. Verify OIDC identity (same as your test)
+    # ------------------------------------------------
+    - task: AWSCLI@1
+      displayName: "Verify AWS OIDC identity"
+      inputs:
+          awsCredentials: "AWS-ECR-OIDC"
+          regionName: $(AWS_REGION)
+          awsCommand: "sts"
+          awsSubCommand: "get-caller-identity"
 
-  # ------------------------------------------------
-  # 2. ECR login + Build + Push (all in one AWS-aware step)
-  # ------------------------------------------------
-  - task: AWSShellScript@1
-    displayName: "ECR Login + Build & Push all services"
-    inputs:
-      awsCredentials: "AWS-ECR-OIDC"
-      regionName: $(AWS_REGION)
-      scriptType: "inline"
-      inlineScript: |
-        set -euo pipefail
+    # ------------------------------------------------
+    # 3. Login to ECR
+    # ------------------------------------------------
+    - task: AWSCLI@1
+      displayName: "ECR Login"
+      inputs:
+          awsCredentials: "AWS-ECR-OIDC"
+          regionName: $(AWS_REGION)
+          awsCommand: "ecr"
+          awsSubCommand: "get-login-password"
+          awsArguments: "--region $(AWS_REGION)"
+      # The output of get-login-password is captured by the next step
 
-        echo "=== Caller identity ==="
-        aws sts get-caller-identity
+    - script: |
+          set -euo pipefail
+          # AWSCLI@1 does not automatically pipe the password, so we re-run it cleanly
+          aws ecr get-login-password --region $(AWS_REGION) | \
+            docker login --username AWS --password-stdin $(ECR_REGISTRY)
+          echo "Successfully logged in to ECR"
+      displayName: "Docker login to ECR"
+      env:
+          AWS_DEFAULT_REGION: $(AWS_REGION)
 
-        echo "=== Logging in to ECR ==="
-        aws ecr get-login-password --region $(AWS_REGION) | \
-          docker login --username AWS --password-stdin $(ECR_REGISTRY)
+    # ------------------------------------------------
+    # 4. Build & Push all services
+    # ------------------------------------------------
+    - script: |
+          set -euo pipefail
 
-        echo "=== Building and pushing services ==="
-        for SERVICE in $(SERVICES); do
-          echo "------------------------------------------------"
-          echo "Building $SERVICE"
-          echo "------------------------------------------------"
+          for SERVICE in $(SERVICES); do
+            echo "================================================"
+            echo " Building & Pushing: $SERVICE"
+            echo "================================================"
 
-          DOCKER_BUILDKIT=1 docker build \
-            --tag $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) \
-            --file ${SERVICE}/Dockerfile \
-            ${SERVICE}
+            DOCKER_BUILDKIT=1 docker build \
+              --tag $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) \
+              --file ${SERVICE}/Dockerfile \
+              ${SERVICE}
 
-          echo "Pushing $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)"
-          docker push $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
+            echo "Pushing $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)"
+            docker push $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
 
-          echo "✓ $SERVICE pushed"
-        done
+            echo "✓ $SERVICE pushed successfully"
+          done
 
-        echo ""
-        echo "All images pushed with tag: $(IMAGE_TAG)"
+          echo ""
+          echo "All images pushed with tag: $(IMAGE_TAG)"
+      displayName: "Build & Push all services to ECR"
+      env:
+          DOCKER_BUILDKIT: 1
+          AWS_DEFAULT_REGION: $(AWS_REGION)
+
+    # ------------------------------------------------
+    # 5. Publish the tag for later CD use
+    # ------------------------------------------------
+    - script: |
+          echo "##vso[task.setvariable variable=IMAGE_TAG;isOutput=true]$(IMAGE_TAG)"
+          echo "Exported IMAGE_TAG=$(IMAGE_TAG)"
+      name: setImageTag
+      displayName: "Export image tag"
