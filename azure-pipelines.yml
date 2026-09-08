@@ -1,72 +1,104 @@
 # azure-pipelines.yml
 trigger:
-  branches:
-    include:
-      - feature/cicd
-      - main
+    branches:
+        include:
+            - feature/cicd
+            - main
 
 variables:
-  AWS_REGION: ap-south-1
-  ECR_REGISTRY: 561531407742.dkr.ecr.ap-south-1.amazonaws.com
-  IMAGE_TAG: $(Build.BuildId)
-  SERVICES: api-gateway product-service inventory-service order-service notification-service
+    AWS_REGION: ap-south-1
+    ECR_REGISTRY: 561531407742.dkr.ecr.ap-south-1.amazonaws.com
+    IMAGE_TAG: $(Build.BuildId)
+    SERVICES: api-gateway product-service inventory-service order-service notification-service
 
 pool:
-  name: e-commerce-pool
-  demands:
-    - Agent.Name -equals azuredevops-deployer
+    name: e-commerce-pool
+    demands:
+        - Agent.Name -equals azuredevops-deployer
 
 steps:
-  - checkout: self
-    clean: true
-    fetchDepth: 1
+    - checkout: self
+      clean: true
+      fetchDepth: 1
 
-  # ------------------------------------------------
-  # 1. Verify OIDC identity
-  # ------------------------------------------------
-  - task: AWSCLI@1
-    displayName: "Verify AWS OIDC identity"
-    inputs:
-      awsCredentials: "AWS-ECR-OIDC"
-      regionName: $(AWS_REGION)
-      awsCommand: "sts"
-      awsSubCommand: "get-caller-identity"
+    # ------------------------------------------------
+    # 1. Verify OIDC identity
+    # ------------------------------------------------
+    - task: AWSCLI@1
+      displayName: "Verify AWS OIDC identity"
+      inputs:
+          awsCredentials: "AWS-ECR-OIDC"
+          regionName: $(AWS_REGION)
+          awsCommand: "sts"
+          awsSubCommand: "get-caller-identity"
 
-  # ------------------------------------------------
-  # 2. ECR login + Build + Push (all in one AWS-aware step)
-  # ------------------------------------------------
-  - task: AWSShellScript@1
-    displayName: "ECR Login + Build & Push all services"
-    inputs:
-      awsCredentials: "AWS-ECR-OIDC"
-      regionName: $(AWS_REGION)
-      scriptType: "inline"
-      inlineScript: |
-        set -euo pipefail
+    # ------------------------------------------------
+    # 2. ECR login + Build + Push (all in one AWS-aware step)
+    # ------------------------------------------------
+    - task: AWSShellScript@1
+      displayName: "ECR Login + Build & Push all services"
+      inputs:
+          awsCredentials: "AWS-ECR-OIDC"
+          regionName: $(AWS_REGION)
+          scriptType: "inline"
+          inlineScript: |
+              set -euo pipefail
 
-        echo "=== Caller identity ==="
-        aws sts get-caller-identity
+              echo "=== Caller identity ==="
+              aws sts get-caller-identity
 
-        echo "=== Logging in to ECR ==="
-        aws ecr get-login-password --region $(AWS_REGION) | \
-          docker login --username AWS --password-stdin $(ECR_REGISTRY)
+              echo "=== Logging in to ECR ==="
+              aws ecr get-login-password --region $(AWS_REGION) | \
+                docker login --username AWS --password-stdin $(ECR_REGISTRY)
 
-        echo "=== Building and pushing services ==="
-        for SERVICE in $(SERVICES); do
-          echo "------------------------------------------------"
-          echo "Building $SERVICE"
-          echo "------------------------------------------------"
+              echo "=== Building and pushing services ==="
+              for SERVICE in $(SERVICES); do
+                echo "------------------------------------------------"
+                echo "Building $SERVICE"
+                echo "------------------------------------------------"
 
-          DOCKER_BUILDKIT=1 docker build \
-            --tag $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) \
-            --file ${SERVICE}/Dockerfile \
-            ${SERVICE}
+                DOCKER_BUILDKIT=1 docker build \
+                  --tag $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) \
+                  --file ${SERVICE}/Dockerfile \
+                  ${SERVICE}
 
-          echo "Pushing $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)"
-          docker push $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
+                echo "Pushing $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)"
+                docker push $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
 
-          echo "✓ $SERVICE pushed"
-        done
+                echo "✓ $SERVICE pushed"
+              done
 
-        echo ""
-        echo "All images pushed with tag: $(IMAGE_TAG)"
+              echo ""
+              echo "All images pushed with tag: $(IMAGE_TAG)"
+    # ------------------------------------------------
+    # 3. Deploy to Kubernetes (immutable tag = Build.BuildId)
+    # ------------------------------------------------
+    - script: |
+          set -euo pipefail
+
+          REGISTRY="561531407742.dkr.ecr.ap-south-1.amazonaws.com"
+          TAG="$(Build.BuildId)"
+          NS="ecommerce"
+          SERVICES="api-gateway product-service inventory-service order-service notification-service"
+
+          echo "=== Deployer identity ==="
+          kubectl auth can-i patch deployments -n "$NS"
+          kubectl config current-context
+
+          for SERVICE in $SERVICES; do
+            IMAGE="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
+            echo "------------------------------------------------"
+            echo "Updating ${SERVICE} -> ${IMAGE}"
+            kubectl set image "deployment/${SERVICE}" \
+              "${SERVICE}=${IMAGE}" \
+              -n "$NS"
+            kubectl rollout status "deployment/${SERVICE}" \
+              -n "$NS" \
+              --timeout=180s
+            echo "OK ${SERVICE}"
+          done
+
+          echo "=== Current images ==="
+          kubectl get deploy -n "$NS" -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image
+      displayName: "Deploy apps to ecommerce namespace"
+      # Runs as agent user ubuntu; uses ~/.kube/config (azuredevops-deployer-sa)

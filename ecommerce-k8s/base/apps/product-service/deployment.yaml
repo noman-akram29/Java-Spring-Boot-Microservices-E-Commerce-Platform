@@ -30,8 +30,8 @@ spec:
                 tier: stateless
         spec:
             serviceAccountName: product-service-sa
-            imagePullSecrets:
-                - name: dockerhub-creds
+            # imagePullSecrets:
+            #     - name: dockerhub-creds
             securityContext:
                 runAsNonRoot: true
                 runAsUser: 1001
@@ -70,7 +70,7 @@ spec:
 
             containers:
                 - name: product-service
-                  image: "561531407742.dkr.ecr.ap-south-1.amazonaws.com/ecommerce/product-service:v3"
+                  image: "561531407742.dkr.ecr.ap-south-1.amazonaws.com/ecommerce/product-service:$(Build.BuildId)"
                   imagePullPolicy: IfNotPresent
                   ports:
                       - containerPort: 8082

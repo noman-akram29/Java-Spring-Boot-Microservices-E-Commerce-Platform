@@ -34,8 +34,8 @@ spec:
         spec:
             serviceAccountName: api-gateway-sa
 
-            imagePullSecrets:
-                - name: dockerhub-creds
+            # imagePullSecrets:
+            #     - name: dockerhub-creds
 
             securityContext:
                 runAsNonRoot: true
@@ -74,7 +74,7 @@ spec:
                           app.kubernetes.io/name: api-gateway
             containers:
                 - name: api-gateway
-                  image: "561531407742.dkr.ecr.ap-south-1.amazonaws.com/ecommerce/api-gateway:v3"
+                  image: "561531407742.dkr.ecr.ap-south-1.amazonaws.com/ecommerce/api-gateway:$(Build.BuildId)"
                   imagePullPolicy: IfNotPresent
                   ports:
                       - containerPort: 8080
