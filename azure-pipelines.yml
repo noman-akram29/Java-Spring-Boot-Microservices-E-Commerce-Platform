@@ -145,6 +145,9 @@ stages:
                       kubectl auth can-i patch deployments -n "$NS"
                       kubectl config current-context
 
+                      # ------------------------------------------------
+                      # 1. Update images
+                      # ------------------------------------------------
                       for SERVICE in $SERVICES; do
                         IMAGE="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
                         echo "------------------------------------------------"
@@ -158,6 +161,59 @@ stages:
                         echo "OK ${SERVICE}"
                       done
 
-                      echo "=== Current images ==="
+                      # ------------------------------------------------
+                      # 2. Stronger post-deployment verification
+                      # ------------------------------------------------
+                      echo ""
+                      echo "=== Post-deployment verification ==="
+
+                      for SERVICE in $SERVICES; do
+                        EXPECTED_IMAGE="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
+                        echo "------------------------------------------------"
+                        echo "Verifying ${SERVICE}"
+
+                        # 2.1 Check the Deployment is using the expected image
+                        CURRENT_IMAGE=$(kubectl get deploy "${SERVICE}" -n "$NS" \
+                          -o jsonpath='{.spec.template.spec.containers[0].image}')
+
+                        if [[ "${CURRENT_IMAGE}" != "${EXPECTED_IMAGE}" ]]; then
+                          echo "ERROR: ${SERVICE} is running ${CURRENT_IMAGE}, expected ${EXPECTED_IMAGE}"
+                          exit 1
+                        fi
+                        echo "✓ Image matches: ${CURRENT_IMAGE}"
+
+                        # 2.2 Check all pods are Ready
+                        READY_PODS=$(kubectl get pods -n "$NS" -l "app.kubernetes.io/name=${SERVICE}" \
+                          -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' \
+                          | grep -c "True" || true)
+
+                        TOTAL_PODS=$(kubectl get pods -n "$NS" -l "app.kubernetes.io/name=${SERVICE}" \
+                          --no-headers | wc -l)
+
+                        if [[ "${READY_PODS}" -eq 0 || "${READY_PODS}" -ne "${TOTAL_PODS}" ]]; then
+                          echo "ERROR: ${SERVICE} has ${READY_PODS}/${TOTAL_PODS} Ready pods"
+                          kubectl get pods -n "$NS" -l "app.kubernetes.io/name=${SERVICE}"
+                          exit 1
+                        fi
+                        echo "✓ All ${READY_PODS} pods are Ready"
+
+                        # 2.3 Fail if any pod is in a bad state
+                        BAD_PODS=$(kubectl get pods -n "$NS" -l "app.kubernetes.io/name=${SERVICE}" \
+                          --field-selector=status.phase!=Running,status.phase!=Succeeded \
+                          --no-headers 2>/dev/null | wc -l || true)
+
+                        if [[ "${BAD_PODS}" -gt 0 ]]; then
+                          echo "ERROR: ${SERVICE} has pods in non-Running state"
+                          kubectl get pods -n "$NS" -l "app.kubernetes.io/name=${SERVICE}"
+                          exit 1
+                        fi
+                        echo "✓ No pods in bad state"
+                      done
+
+                      echo ""
+                      echo "=== Final image list ==="
                       kubectl get deploy -n "$NS" -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image
+
+                      echo ""
+                      echo "All services deployed and verified successfully."
                   displayName: "Deploy apps to ecommerce namespace"
