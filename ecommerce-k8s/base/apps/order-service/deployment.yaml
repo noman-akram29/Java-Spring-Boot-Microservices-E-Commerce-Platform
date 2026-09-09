@@ -69,8 +69,7 @@ spec:
                           app.kubernetes.io/name: order-service
             containers:
                 - name: order-service
-                  image: "561531407742.dkr.ecr.ap-south-1.amazonaws.com/ecommerce/order-service:$(Build.BuildId)"
-                  imagePullPolicy: IfNotPresent
+                  image: "561531407742.dkr.ecr.ap-south-1.amazonaws.com/ecommerce/order-service:initial"
                   ports:
                       - containerPort: 8083
                   envFrom:
