@@ -172,7 +172,7 @@ stages:
                         echo "------------------------------------------------"
                         echo "Verifying ${SERVICE}"
 
-                        # 2.1 Check the Deployment is using the expected image
+                        # 2.1 Image must match
                         CURRENT_IMAGE=$(kubectl get deploy "${SERVICE}" -n "$NS" \
                           -o jsonpath='{.spec.template.spec.containers[0].image}')
 
@@ -182,32 +182,40 @@ stages:
                         fi
                         echo "✓ Image matches: ${CURRENT_IMAGE}"
 
-                        # 2.2 Check all pods are Ready
-                        READY_PODS=$(kubectl get pods -n "$NS" -l "app.kubernetes.io/name=${SERVICE}" \
-                          -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' \
-                          | grep -c "True" || true)
+                        # 2.2 Deployment must report Ready replicas == desired
+                        READY=$(kubectl get deploy "${SERVICE}" -n "$NS" -o jsonpath='{.status.readyReplicas}')
+                        DESIRED=$(kubectl get deploy "${SERVICE}" -n "$NS" -o jsonpath='{.status.replicas}')
 
-                        TOTAL_PODS=$(kubectl get pods -n "$NS" -l "app.kubernetes.io/name=${SERVICE}" \
-                          --no-headers | wc -l)
-
-                        if [[ "${READY_PODS}" -eq 0 || "${READY_PODS}" -ne "${TOTAL_PODS}" ]]; then
-                          echo "ERROR: ${SERVICE} has ${READY_PODS}/${TOTAL_PODS} Ready pods"
+                        if [[ -z "${READY}" || "${READY}" != "${DESIRED}" ]]; then
+                          echo "ERROR: ${SERVICE} Ready=${READY:-0} / Desired=${DESIRED}"
                           kubectl get pods -n "$NS" -l "app.kubernetes.io/name=${SERVICE}"
                           exit 1
                         fi
-                        echo "✓ All ${READY_PODS} pods are Ready"
+                        echo "✓ Deployment Ready ${READY}/${DESIRED}"
 
-                        # 2.3 Fail if any pod is in a bad state
-                        BAD_PODS=$(kubectl get pods -n "$NS" -l "app.kubernetes.io/name=${SERVICE}" \
-                          --field-selector=status.phase!=Running,status.phase!=Succeeded \
-                          --no-headers 2>/dev/null | wc -l || true)
+                        # 2.3 Current pods (owned by the newest ReplicaSet) must be Running + Ready
+                        # We ignore old ReplicaSets that still have terminated pods
+                        CURRENT_RS=$(kubectl get rs -n "$NS" -l "app.kubernetes.io/name=${SERVICE}" \
+                          --sort-by=.metadata.creationTimestamp \
+                          -o jsonpath='{.items[-1].metadata.name}')
 
-                        if [[ "${BAD_PODS}" -gt 0 ]]; then
-                          echo "ERROR: ${SERVICE} has pods in non-Running state"
+                        echo "Current ReplicaSet: ${CURRENT_RS}"
+
+                        BAD_PODS=$(kubectl get pods -n "$NS" \
+                          -l "app.kubernetes.io/name=${SERVICE}" \
+                          --field-selector=status.phase!=Running \
+                          -o json | \
+                          jq -r --arg rs "$CURRENT_RS" \
+                            '.items[] | select(.metadata.ownerReferences[]?.name == $rs) | .metadata.name' || true)
+
+                        if [[ -n "${BAD_PODS}" ]]; then
+                          echo "ERROR: Current ReplicaSet has non-Running pods:"
+                          echo "${BAD_PODS}"
                           kubectl get pods -n "$NS" -l "app.kubernetes.io/name=${SERVICE}"
                           exit 1
                         fi
-                        echo "✓ No pods in bad state"
+
+                        echo "✓ Current pods are healthy"
                       done
 
                       echo ""
