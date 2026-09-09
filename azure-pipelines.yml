@@ -1,13 +1,163 @@
-trigger: none
+# azure-pipelines.yml
+# Production CI/CD - Step 1 Hardening
+# Build runs on feature/cicd + main
+# Deploy runs ONLY on main
+
+trigger:
+    branches:
+        include:
+            - feature/cicd
+            - main
+
+variables:
+    AWS_REGION: ap-south-1
+    ECR_REGISTRY: 561531407742.dkr.ecr.ap-south-1.amazonaws.com
+    IMAGE_TAG: $(Build.BuildId)
+    SERVICES: api-gateway product-service inventory-service order-service notification-service
+    NAMESPACE: ecommerce
 
 pool:
-  vmImage: ubuntu-latest
+    name: e-commerce-pool
+    demands:
+        - Agent.Name -equals azuredevops-deployer
 
-steps:
-  - task: AWSCLI@1
-    displayName: "Test AWS OIDC authentication"
-    inputs:
-      awsCredentials: "AWS-ECR-OIDC"
-      regionName: "ap-south-1"
-      awsCommand: "sts"
-      awsSubCommand: "get-caller-identity"
+stages:
+    # ------------------------------------------------
+    # STAGE 1: Build & Push (can run on feature branches)
+    # ------------------------------------------------
+    - stage: Build
+      displayName: Build and Push to ECR
+      jobs:
+          - job: BuildAndPush
+            displayName: Build & Push immutable images
+            steps:
+                - checkout: self
+                  clean: true
+                  fetchDepth: 1
+
+                - task: AWSCLI@1
+                  displayName: "Verify AWS OIDC identity"
+                  inputs:
+                      awsCredentials: "AWS-ECR-OIDC"
+                      regionName: $(AWS_REGION)
+                      awsCommand: "sts"
+                      awsSubCommand: "get-caller-identity"
+
+                - task: AWSShellScript@1
+                  displayName: "ECR Login + Build & Push all services"
+                  inputs:
+                      awsCredentials: "AWS-ECR-OIDC"
+                      regionName: $(AWS_REGION)
+                      scriptType: "inline"
+                      inlineScript: |
+                          set -euo pipefail
+
+                          echo "=== Caller identity ==="
+                          aws sts get-caller-identity
+
+                          echo "=== Logging in to ECR ==="
+                          aws ecr get-login-password --region $(AWS_REGION) | \
+                            docker login --username AWS --password-stdin $(ECR_REGISTRY)
+
+                          echo "=== Building and pushing services ==="
+                          for SERVICE in $(SERVICES); do
+                            echo "------------------------------------------------"
+                            echo "Building $SERVICE"
+                            echo "------------------------------------------------"
+
+                            DOCKER_BUILDKIT=1 docker build \
+                              --tag $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) \
+                              --file ${SERVICE}/Dockerfile \
+                              ${SERVICE}
+
+                            echo "Pushing $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)"
+                            docker push $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
+
+                            echo "✓ $SERVICE pushed"
+                          done
+
+                          echo ""
+                          echo "All images pushed with tag: $(IMAGE_TAG)"
+
+    # ------------------------------------------------
+    # STAGE 2: Deploy (ONLY on main)
+    # ------------------------------------------------
+    - stage: Deploy
+      displayName: Deploy to Kubernetes
+      dependsOn: Build
+      condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+      jobs:
+          - job: DeployApps
+            displayName: Deploy applications
+            steps:
+                - checkout: self
+                  clean: true
+                  fetchDepth: 1
+
+                # ------------------------------------------------
+                # 2.1 Verify all images exist in ECR (fail fast)
+                # ------------------------------------------------
+                - task: AWSShellScript@1
+                  displayName: "Verify all images exist in ECR"
+                  inputs:
+                      awsCredentials: "AWS-ECR-OIDC"
+                      regionName: $(AWS_REGION)
+                      scriptType: "inline"
+                      inlineScript: |
+                          set -euo pipefail
+
+                          REGISTRY="561531407742.dkr.ecr.ap-south-1.amazonaws.com"
+                          TAG="$(Build.BuildId)"
+                          SERVICES="api-gateway product-service inventory-service order-service notification-service"
+
+                          echo "=== Verifying images exist in ECR for tag: ${TAG} ==="
+
+                          for SERVICE in $SERVICES; do
+                            IMAGE_URI="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
+                            echo "Checking ${IMAGE_URI} ..."
+
+                            # This command fails (non-zero) if the image+tag does not exist
+                            aws ecr describe-images \
+                              --repository-name "ecommerce/${SERVICE}" \
+                              --image-ids imageTag="${TAG}" \
+                              --region $(AWS_REGION) \
+                              --query 'imageDetails[0].imageTags' \
+                              --output text > /dev/null
+
+                            echo "✓ ${SERVICE}:${TAG} exists"
+                          done
+
+                          echo ""
+                          echo "All 5 images verified successfully."
+
+                # ------------------------------------------------
+                # 2.2 Deploy (only runs if verification passed)
+                # ------------------------------------------------
+                - script: |
+                      set -euo pipefail
+
+                      REGISTRY="561531407742.dkr.ecr.ap-south-1.amazonaws.com"
+                      TAG="$(Build.BuildId)"
+                      NS="$(NAMESPACE)"
+                      SERVICES="api-gateway product-service inventory-service order-service notification-service"
+
+                      echo "=== Deployer identity ==="
+                      kubectl auth can-i patch deployments -n "$NS"
+                      kubectl config current-context
+
+                      for SERVICE in $SERVICES; do
+                        IMAGE="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
+                        echo "------------------------------------------------"
+                        echo "Updating ${SERVICE} -> ${IMAGE}"
+                        kubectl set image "deployment/${SERVICE}" \
+                          "${SERVICE}=${IMAGE}" \
+                          -n "$NS"
+                        kubectl rollout status "deployment/${SERVICE}" \
+                          -n "$NS" \
+                          --timeout=180s
+                        echo "OK ${SERVICE}"
+                      done
+
+                      echo "=== Current images ==="
+                      kubectl get deploy -n "$NS" -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image
+                  displayName: "Deploy apps to ecommerce namespace"

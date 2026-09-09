@@ -1,10 +1,127 @@
-target/
+# ============================================================
+# Git / Repository Metadata
+# ============================================================
+
 .git/
 .gitignore
+.gitattributes
+
+
+# ============================================================
+# Environment / Secrets
+# ============================================================
+
+.env
+.env.*
+secrets/
+
+# Certificates / private keys / keystores
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Spring local / development / production secret profiles
+**/src/main/resources/application-local.properties
+**/src/main/resources/application-dev.properties
+**/src/main/resources/application-prod.properties
+**/src/main/resources/application-secret.properties
+
+
+# ============================================================
+# Build Artifacts
+# ============================================================
+
+target/
+build/
+.gradle/
+
+# Maven reports / generated output
+**/surefire-reports/
+**/failsafe-reports/
+**/test-output/
+
+
+# ============================================================
+# Logs / Runtime Dumps
+# ============================================================
+
 *.log
-*.iml
+logs/
+**/logs/
+
+hs_err_pid*
+replay_pid*
+*.hprof
+heapdump.hprof
+
+
+# ============================================================
+# IDEs / Editors
+# ============================================================
+
 .idea/
+*.iml
+*.ipr
+*.iws
+out/
+
 .vscode/
+
+.classpath
+.project
+.settings/
+.factorypath
+.apt_generated/
+.springBeans
+.sts4-cache/
+
+
+# ============================================================
+# Local / Database / Messaging Data
+# ============================================================
+
+docker-data/
+volume-data/
+
+# MySQL
+**/mysql/data/
+**/docker/mysql/data/
+order-service/mysql/
+
+# MongoDB
+**/data/db/
+**/journal/
+**/diagnostic.data/
+WiredTiger*
+mongod.lock
+
+# Kafka / ZooKeeper
+**/kafka-logs/
+**/zookeeper/
+
+
+# ============================================================
+# Archives / Temporary Files
+# ============================================================
+
+*.zip
+*.tar
+*.gz
+*.7z
+
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+
+# ============================================================
+# Documentation / Local Project Files
+# ============================================================
+
 README.md
-Dockerfile
-docker-compose*.yml

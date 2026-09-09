@@ -30,8 +30,8 @@ spec:
                 tier: stateless
         spec:
             serviceAccountName: inventory-service-sa
-            imagePullSecrets:
-                - name: dockerhub-creds
+            # imagePullSecrets:
+            #     - name: dockerhub-creds
             securityContext:
                 runAsNonRoot: true
                 runAsUser: 1001
@@ -67,7 +67,7 @@ spec:
                           app.kubernetes.io/name: inventory-service
             containers:
                 - name: inventory-service
-                  image: "nomanakram29/inventory-service:v3"
+                  image: "561531407742.dkr.ecr.ap-south-1.amazonaws.com/ecommerce/inventory-service:$(Build.BuildId)"
                   imagePullPolicy: IfNotPresent
                   ports:
                       - containerPort: 8081
