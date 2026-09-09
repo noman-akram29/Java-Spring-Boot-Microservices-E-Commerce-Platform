@@ -1,6 +1,6 @@
 # azure-pipelines.yml
 # Production CI/CD - Step 1 Hardening
-# Build can run on feature/cicd + main
+# Build runs on feature/cicd + main
 # Deploy runs ONLY on main
 
 trigger:
@@ -23,7 +23,7 @@ pool:
 
 stages:
     # ------------------------------------------------
-    # STAGE 1: Build & Push
+    # STAGE 1: Build & Push (can run on feature branches)
     # ------------------------------------------------
     - stage: Build
       displayName: Build and Push to ECR
@@ -94,6 +94,45 @@ stages:
                   clean: true
                   fetchDepth: 1
 
+                # ------------------------------------------------
+                # 2.1 Verify all images exist in ECR (fail fast)
+                # ------------------------------------------------
+                - task: AWSShellScript@1
+                  displayName: "Verify all images exist in ECR"
+                  inputs:
+                      awsCredentials: "AWS-ECR-OIDC"
+                      regionName: $(AWS_REGION)
+                      scriptType: "inline"
+                      inlineScript: |
+                          set -euo pipefail
+
+                          REGISTRY="561531407742.dkr.ecr.ap-south-1.amazonaws.com"
+                          TAG="$(Build.BuildId)"
+                          SERVICES="api-gateway product-service inventory-service order-service notification-service"
+
+                          echo "=== Verifying images exist in ECR for tag: ${TAG} ==="
+
+                          for SERVICE in $SERVICES; do
+                            IMAGE_URI="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
+                            echo "Checking ${IMAGE_URI} ..."
+
+                            # This command fails (non-zero) if the image+tag does not exist
+                            aws ecr describe-images \
+                              --repository-name "ecommerce/${SERVICE}" \
+                              --image-ids imageTag="${TAG}" \
+                              --region $(AWS_REGION) \
+                              --query 'imageDetails[0].imageTags' \
+                              --output text > /dev/null
+
+                            echo "✓ ${SERVICE}:${TAG} exists"
+                          done
+
+                          echo ""
+                          echo "All 5 images verified successfully."
+
+                # ------------------------------------------------
+                # 2.2 Deploy (only runs if verification passed)
+                # ------------------------------------------------
                 - script: |
                       set -euo pipefail
 
