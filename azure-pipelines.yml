@@ -1,4 +1,8 @@
 # azure-pipelines.yml
+# Production CI/CD - Step 1 Hardening
+# Build can run on feature/cicd + main
+# Deploy runs ONLY on main
+
 trigger:
     branches:
         include:
@@ -10,95 +14,111 @@ variables:
     ECR_REGISTRY: 561531407742.dkr.ecr.ap-south-1.amazonaws.com
     IMAGE_TAG: $(Build.BuildId)
     SERVICES: api-gateway product-service inventory-service order-service notification-service
+    NAMESPACE: ecommerce
 
 pool:
     name: e-commerce-pool
     demands:
         - Agent.Name -equals azuredevops-deployer
 
-steps:
-    - checkout: self
-      clean: true
-      fetchDepth: 1
+stages:
+    # ------------------------------------------------
+    # STAGE 1: Build & Push
+    # ------------------------------------------------
+    - stage: Build
+      displayName: Build and Push to ECR
+      jobs:
+          - job: BuildAndPush
+            displayName: Build & Push immutable images
+            steps:
+                - checkout: self
+                  clean: true
+                  fetchDepth: 1
+
+                - task: AWSCLI@1
+                  displayName: "Verify AWS OIDC identity"
+                  inputs:
+                      awsCredentials: "AWS-ECR-OIDC"
+                      regionName: $(AWS_REGION)
+                      awsCommand: "sts"
+                      awsSubCommand: "get-caller-identity"
+
+                - task: AWSShellScript@1
+                  displayName: "ECR Login + Build & Push all services"
+                  inputs:
+                      awsCredentials: "AWS-ECR-OIDC"
+                      regionName: $(AWS_REGION)
+                      scriptType: "inline"
+                      inlineScript: |
+                          set -euo pipefail
+
+                          echo "=== Caller identity ==="
+                          aws sts get-caller-identity
+
+                          echo "=== Logging in to ECR ==="
+                          aws ecr get-login-password --region $(AWS_REGION) | \
+                            docker login --username AWS --password-stdin $(ECR_REGISTRY)
+
+                          echo "=== Building and pushing services ==="
+                          for SERVICE in $(SERVICES); do
+                            echo "------------------------------------------------"
+                            echo "Building $SERVICE"
+                            echo "------------------------------------------------"
+
+                            DOCKER_BUILDKIT=1 docker build \
+                              --tag $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) \
+                              --file ${SERVICE}/Dockerfile \
+                              ${SERVICE}
+
+                            echo "Pushing $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)"
+                            docker push $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
+
+                            echo "✓ $SERVICE pushed"
+                          done
+
+                          echo ""
+                          echo "All images pushed with tag: $(IMAGE_TAG)"
 
     # ------------------------------------------------
-    # 1. Verify OIDC identity
+    # STAGE 2: Deploy (ONLY on main)
     # ------------------------------------------------
-    - task: AWSCLI@1
-      displayName: "Verify AWS OIDC identity"
-      inputs:
-          awsCredentials: "AWS-ECR-OIDC"
-          regionName: $(AWS_REGION)
-          awsCommand: "sts"
-          awsSubCommand: "get-caller-identity"
+    - stage: Deploy
+      displayName: Deploy to Kubernetes
+      dependsOn: Build
+      condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+      jobs:
+          - job: DeployApps
+            displayName: Deploy applications
+            steps:
+                - checkout: self
+                  clean: true
+                  fetchDepth: 1
 
-    # ------------------------------------------------
-    # 2. ECR login + Build + Push (all in one AWS-aware step)
-    # ------------------------------------------------
-    - task: AWSShellScript@1
-      displayName: "ECR Login + Build & Push all services"
-      inputs:
-          awsCredentials: "AWS-ECR-OIDC"
-          regionName: $(AWS_REGION)
-          scriptType: "inline"
-          inlineScript: |
-              set -euo pipefail
+                - script: |
+                      set -euo pipefail
 
-              echo "=== Caller identity ==="
-              aws sts get-caller-identity
+                      REGISTRY="561531407742.dkr.ecr.ap-south-1.amazonaws.com"
+                      TAG="$(Build.BuildId)"
+                      NS="$(NAMESPACE)"
+                      SERVICES="api-gateway product-service inventory-service order-service notification-service"
 
-              echo "=== Logging in to ECR ==="
-              aws ecr get-login-password --region $(AWS_REGION) | \
-                docker login --username AWS --password-stdin $(ECR_REGISTRY)
+                      echo "=== Deployer identity ==="
+                      kubectl auth can-i patch deployments -n "$NS"
+                      kubectl config current-context
 
-              echo "=== Building and pushing services ==="
-              for SERVICE in $(SERVICES); do
-                echo "------------------------------------------------"
-                echo "Building $SERVICE"
-                echo "------------------------------------------------"
+                      for SERVICE in $SERVICES; do
+                        IMAGE="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
+                        echo "------------------------------------------------"
+                        echo "Updating ${SERVICE} -> ${IMAGE}"
+                        kubectl set image "deployment/${SERVICE}" \
+                          "${SERVICE}=${IMAGE}" \
+                          -n "$NS"
+                        kubectl rollout status "deployment/${SERVICE}" \
+                          -n "$NS" \
+                          --timeout=180s
+                        echo "OK ${SERVICE}"
+                      done
 
-                DOCKER_BUILDKIT=1 docker build \
-                  --tag $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) \
-                  --file ${SERVICE}/Dockerfile \
-                  ${SERVICE}
-
-                echo "Pushing $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)"
-                docker push $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
-
-                echo "✓ $SERVICE pushed"
-              done
-
-              echo ""
-              echo "All images pushed with tag: $(IMAGE_TAG)"
-    # ------------------------------------------------
-    # 3. Deploy to Kubernetes (immutable tag = Build.BuildId)
-    # ------------------------------------------------
-    - script: |
-          set -euo pipefail
-
-          REGISTRY="561531407742.dkr.ecr.ap-south-1.amazonaws.com"
-          TAG="$(Build.BuildId)"
-          NS="ecommerce"
-          SERVICES="api-gateway product-service inventory-service order-service notification-service"
-
-          echo "=== Deployer identity ==="
-          kubectl auth can-i patch deployments -n "$NS"
-          kubectl config current-context
-
-          for SERVICE in $SERVICES; do
-            IMAGE="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
-            echo "------------------------------------------------"
-            echo "Updating ${SERVICE} -> ${IMAGE}"
-            kubectl set image "deployment/${SERVICE}" \
-              "${SERVICE}=${IMAGE}" \
-              -n "$NS"
-            kubectl rollout status "deployment/${SERVICE}" \
-              -n "$NS" \
-              --timeout=180s
-            echo "OK ${SERVICE}"
-          done
-
-          echo "=== Current images ==="
-          kubectl get deploy -n "$NS" -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image
-      displayName: "Deploy apps to ecommerce namespace"
-      # Runs as agent user ubuntu; uses ~/.kube/config (azuredevops-deployer-sa)
+                      echo "=== Current images ==="
+                      kubectl get deploy -n "$NS" -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image
+                  displayName: "Deploy apps to ecommerce namespace"
