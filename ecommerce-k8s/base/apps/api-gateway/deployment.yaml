@@ -93,6 +93,18 @@ spec:
                         value: "none"
                       - name: OTEL_LOGS_EXPORTER
                         value: "none"
+
+                      - name: GATEWAY_AUTH_USERNAME
+                        valueFrom:
+                        secretKeyRef:
+                            name: api-gateway-auth
+                            key: username
+
+                      - name: GATEWAY_AUTH_PASSWORD
+                        valueFrom:
+                        secretKeyRef:
+                            name: api-gateway-auth
+                            key: password
                   envFrom:
                       - configMapRef:
                             name: api-gateway-config
