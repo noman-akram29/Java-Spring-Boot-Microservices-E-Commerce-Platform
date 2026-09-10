@@ -6,6 +6,7 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
 
 @SpringBootApplication
 @EnableFeignClients
+@EnableScheduling
 public class OrderServiceApplication {
 
     public static void main(String[] args) {
