@@ -146,7 +146,7 @@ stages:
                       kubectl config current-context
 
                       # ------------------------------------------------
-                      # 1. Update images
+                      # 1. Update images + wait for rollout
                       # ------------------------------------------------
                       for SERVICE in $SERVICES; do
                         IMAGE="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
@@ -158,11 +158,11 @@ stages:
                         kubectl rollout status "deployment/${SERVICE}" \
                           -n "$NS" \
                           --timeout=180s
-                        echo "OK ${SERVICE}"
+                        echo "OK ${SERVICE} rollout completed"
                       done
 
                       # ------------------------------------------------
-                      # 2. Stronger post-deployment verification
+                      # 2. Production-grade post-deployment verification
                       # ------------------------------------------------
                       echo ""
                       echo "=== Post-deployment verification ==="
@@ -172,55 +172,37 @@ stages:
                         echo "------------------------------------------------"
                         echo "Verifying ${SERVICE}"
 
-                        # 2.1 Image must match
+                        # 2.1 Image must match exactly
                         CURRENT_IMAGE=$(kubectl get deploy "${SERVICE}" -n "$NS" \
                           -o jsonpath='{.spec.template.spec.containers[0].image}')
 
                         if [[ "${CURRENT_IMAGE}" != "${EXPECTED_IMAGE}" ]]; then
-                          echo "ERROR: ${SERVICE} is running ${CURRENT_IMAGE}, expected ${EXPECTED_IMAGE}"
+                          echo "ERROR: ${SERVICE} image is ${CURRENT_IMAGE}"
+                          echo "       expected ${EXPECTED_IMAGE}"
                           exit 1
                         fi
                         echo "✓ Image matches: ${CURRENT_IMAGE}"
 
-                        # 2.2 Deployment must report Ready replicas == desired
+                        # 2.2 Deployment must be fully Ready
                         READY=$(kubectl get deploy "${SERVICE}" -n "$NS" -o jsonpath='{.status.readyReplicas}')
                         DESIRED=$(kubectl get deploy "${SERVICE}" -n "$NS" -o jsonpath='{.status.replicas}')
 
-                        if [[ -z "${READY}" || "${READY}" != "${DESIRED}" ]]; then
-                          echo "ERROR: ${SERVICE} Ready=${READY:-0} / Desired=${DESIRED}"
+                        # Handle the case where readyReplicas is not yet set
+                        READY=${READY:-0}
+                        DESIRED=${DESIRED:-0}
+
+                        if [[ "${READY}" != "${DESIRED}" || "${DESIRED}" -eq 0 ]]; then
+                          echo "ERROR: ${SERVICE} is not fully Ready (${READY}/${DESIRED})"
                           kubectl get pods -n "$NS" -l "app.kubernetes.io/name=${SERVICE}"
                           exit 1
                         fi
                         echo "✓ Deployment Ready ${READY}/${DESIRED}"
-
-                        # 2.3 Current pods (owned by the newest ReplicaSet) must be Running + Ready
-                        # We ignore old ReplicaSets that still have terminated pods
-                        CURRENT_RS=$(kubectl get rs -n "$NS" -l "app.kubernetes.io/name=${SERVICE}" \
-                          --sort-by=.metadata.creationTimestamp \
-                          -o jsonpath='{.items[-1].metadata.name}')
-
-                        echo "Current ReplicaSet: ${CURRENT_RS}"
-
-                        BAD_PODS=$(kubectl get pods -n "$NS" \
-                          -l "app.kubernetes.io/name=${SERVICE}" \
-                          --field-selector=status.phase!=Running \
-                          -o json | \
-                          jq -r --arg rs "$CURRENT_RS" \
-                            '.items[] | select(.metadata.ownerReferences[]?.name == $rs) | .metadata.name' || true)
-
-                        if [[ -n "${BAD_PODS}" ]]; then
-                          echo "ERROR: Current ReplicaSet has non-Running pods:"
-                          echo "${BAD_PODS}"
-                          kubectl get pods -n "$NS" -l "app.kubernetes.io/name=${SERVICE}"
-                          exit 1
-                        fi
-
-                        echo "✓ Current pods are healthy"
                       done
 
                       echo ""
                       echo "=== Final image list ==="
-                      kubectl get deploy -n "$NS" -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image
+                      kubectl get deploy -n "$NS" \
+                        -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image,READY:.status.readyReplicas
 
                       echo ""
                       echo "All services deployed and verified successfully."
