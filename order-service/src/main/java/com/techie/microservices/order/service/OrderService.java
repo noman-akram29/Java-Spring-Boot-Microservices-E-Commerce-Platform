@@ -33,32 +33,41 @@ public class OrderService {
     @Transactional
     public OrderResponse placeOrder(OrderRequest orderRequest) {
 
-        // 1. CHECK INVENTORY
-        boolean isProductInStock = inventoryClient.isInStock(
-                orderRequest.skuCode(),
-                orderRequest.quantity()
-        );
-
-        if (!isProductInStock) {
-            log.warn("Out of stock: {}", orderRequest.skuCode());
-            return new OrderResponse(null, "FAILED", "Product is out of stock");
+        // 1. ATOMICALLY RESERVE/DECREASE INVENTORY
+        ResponseEntity<InventoryResponse> response;
+        try {
+            response = inventoryClient.decreaseInventory(
+                    new InventoryRequest(
+                            orderRequest.skuCode(),
+                            orderRequest.quantity()
+                    )
+            );
+        } catch (Exception e) {
+            log.warn(
+                    "Inventory reservation failed for SKU {}: {}",
+                    orderRequest.skuCode(),
+                    e.getMessage()
+            );
+            return new OrderResponse(
+                    null,
+                    "FAILED",
+                    "Product is out of stock or inventory update failed"
+            );
         }
-
-        // 2. DECREASE INVENTORY
-        ResponseEntity<InventoryResponse> response =
-                inventoryClient.decreaseInventory(
-                        new InventoryRequest(
-                                orderRequest.skuCode(),
-                                orderRequest.quantity()
-                        )
-                );
 
         if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-            log.error("Inventory decrease failed for SKU: {}", orderRequest.skuCode());
-            return new OrderResponse(null, "FAILED", "Inventory update failed");
+            log.warn(
+                    "Insufficient stock or inventory error for SKU: {}",
+                    orderRequest.skuCode()
+            );
+            return new OrderResponse(
+                    null,
+                    "FAILED",
+                    "Product is out of stock or inventory update failed"
+            );
         }
 
-        // 3. SAVE ORDER + OUTBOX in the SAME transaction
+        // 2. SAVE ORDER + OUTBOX in the SAME transaction
         Order order = new Order();
         order.setOrderNumber(UUID.randomUUID().toString());
         order.setPrice(orderRequest.price());
@@ -75,6 +84,7 @@ public class OrderService {
         outboxEvent.setAggregateType("Order");
         outboxEvent.setAggregateId(order.getOrderNumber());
         outboxEvent.setEventType("OrderPlaced");
+
         try {
             outboxEvent.setPayload(objectMapper.writeValueAsString(event));
         } catch (JsonProcessingException e) {

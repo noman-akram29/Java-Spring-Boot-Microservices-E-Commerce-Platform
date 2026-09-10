@@ -1,5 +1,5 @@
 # azure-pipelines.yml
-# Production CI/CD - Step 1 Hardening
+# Production CI/CD - Step 1 Hardening with Trivy Vulnerability Scanning
 # Build runs on feature/cicd + main
 # Deploy runs ONLY on main
 
@@ -23,13 +23,13 @@ pool:
 
 stages:
     # ------------------------------------------------
-    # STAGE 1: Build & Push (can run on feature branches)
+    # STAGE 1: Build, Scan & Push (can run on feature branches)
     # ------------------------------------------------
     - stage: Build
-      displayName: Build and Push to ECR
+      displayName: Build, Scan & Push to ECR
       jobs:
           - job: BuildAndPush
-            displayName: Build & Push immutable images
+            displayName: Build, Scan & Push immutable images
             steps:
                 - checkout: self
                   clean: true
@@ -44,7 +44,7 @@ stages:
                       awsSubCommand: "get-caller-identity"
 
                 - task: AWSShellScript@1
-                  displayName: "ECR Login + Build & Push all services"
+                  displayName: "ECR Login + Build + Trivy Scan + Push"
                   inputs:
                       awsCredentials: "AWS-ECR-OIDC"
                       regionName: $(AWS_REGION)
@@ -59,7 +59,7 @@ stages:
                           aws ecr get-login-password --region $(AWS_REGION) | \
                             docker login --username AWS --password-stdin $(ECR_REGISTRY)
 
-                          echo "=== Building and pushing services ==="
+                          echo "=== Building, Scanning, and Pushing services ==="
                           for SERVICE in $(SERVICES); do
                             echo "------------------------------------------------"
                             echo "Building $SERVICE"
@@ -70,14 +70,26 @@ stages:
                               --file ${SERVICE}/Dockerfile \
                               ${SERVICE}
 
-                            echo "Pushing $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)"
+                            echo "=== Trivy vulnerability scan (CRITICAL,HIGH) ==="
+                            docker run --rm \
+                              -v /var/run/docker.sock:/var/run/docker.sock \
+                              aquasec/trivy:latest image \
+                                --exit-code 1 \
+                                --severity CRITICAL,HIGH \
+                                --ignore-unfixed \
+                                --no-progress \
+                                $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
+
+                            echo "✓ ${SERVICE} passed Trivy scan"
+
+                            echo "=== Pushing $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) ==="
                             docker push $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
 
-                            echo "✓ $SERVICE pushed"
+                            echo "✓ $SERVICE done"
                           done
 
                           echo ""
-                          echo "All images pushed with tag: $(IMAGE_TAG)"
+                          echo "All images passed vulnerability gate and pushed successfully with tag: $(IMAGE_TAG)"
 
     # ------------------------------------------------
     # STAGE 2: Deploy (ONLY on main)
@@ -116,7 +128,6 @@ stages:
                             IMAGE_URI="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
                             echo "Checking ${IMAGE_URI} ..."
 
-                            # This command fails (non-zero) if the image+tag does not exist
                             aws ecr describe-images \
                               --repository-name "ecommerce/${SERVICE}" \
                               --image-ids imageTag="${TAG}" \
@@ -178,7 +189,7 @@ stages:
 
                         if [[ "${CURRENT_IMAGE}" != "${EXPECTED_IMAGE}" ]]; then
                           echo "ERROR: ${SERVICE} image is ${CURRENT_IMAGE}"
-                          echo "       expected ${EXPECTED_IMAGE}"
+                          echo "        expected ${EXPECTED_IMAGE}"
                           exit 1
                         fi
                         echo "✓ Image matches: ${CURRENT_IMAGE}"
@@ -187,7 +198,6 @@ stages:
                         READY=$(kubectl get deploy "${SERVICE}" -n "$NS" -o jsonpath='{.status.readyReplicas}')
                         DESIRED=$(kubectl get deploy "${SERVICE}" -n "$NS" -o jsonpath='{.status.replicas}')
 
-                        # Handle the case where readyReplicas is not yet set
                         READY=${READY:-0}
                         DESIRED=${DESIRED:-0}
 
