@@ -75,9 +75,9 @@ services:
         image: apache/kafka:3.9.0
 
         environment:
-            KAFKA_NODE_ID: 1
-            KAFKA_PROCESS_ROLES: "broker,controller"
-            KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+            KAFKA_NODE_ID: "${KAFKA_NODE_ID}"
+            KAFKA_PROCESS_ROLES: "${KAFKA_PROCESS_ROLES}"
+            KAFKA_CONTROLLER_QUORUM_VOTERS: "${KAFKA_CONTROLLER_QUORUM_VOTERS}"
             KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
             KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:${KAFKA_PORT}"
             KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
@@ -86,7 +86,7 @@ services:
             KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
             KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
             KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-            CLUSTER_ID: "5L6g3nShT-eMCtK--X86sw"
+            CLUSTER_ID: "${KAFKA_CLUSTER_ID}"
 
         expose:
             - "${KAFKA_PORT}"
@@ -149,7 +149,7 @@ services:
         environment:
             SERVER_PORT: ${PRODUCT_SERVICE_PORT}
             SPRING_DATA_MONGODB_URI: >-
-                mongodb://${MONGO_ROOT_USERNAME}:__MONGO_PASSWORD__@mongodb:27017/product-service?authSource=admin
+                mongodb://${MONGO_ROOT_USERNAME}:__MONGO_PASSWORD__@mongodb:${MONGO_PORT}/product-service?authSource=admin
             INVENTORY_SERVICE_URL: "http://inventory-service:${INVENTORY_SERVICE_PORT}"
         secrets:
             - mongo_root_password
@@ -157,7 +157,13 @@ services:
             - "${PRODUCT_SERVICE_PORT}"
         healthcheck:
             <<: *default-healthcheck
-            test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+            test:
+                [
+                    "CMD",
+                    "curl",
+                    "-f",
+                    "http://localhost:${PRODUCT_SERVICE_PORT}/actuator/health",
+                ]
         deploy:
             resources:
                 limits:
@@ -178,8 +184,8 @@ services:
                 condition: service_healthy
         environment:
             SERVER_PORT: ${INVENTORY_SERVICE_PORT}
-            SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/${INVENTORY_DATABASE}"
-            SPRING_DATASOURCE_USERNAME: root
+            SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:${MYSQL_PORT}/${INVENTORY_DATABASE}"
+            SPRING_DATASOURCE_USERNAME: "${MYSQL_USER}"
             # SPRING_DATASOURCE_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
         secrets:
             - mysql_root_password
@@ -187,7 +193,13 @@ services:
             - "${INVENTORY_SERVICE_PORT}"
         healthcheck:
             <<: *default-healthcheck
-            test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+            test:
+                [
+                    "CMD",
+                    "curl",
+                    "-f",
+                    "http://localhost:${INVENTORY_SERVICE_PORT}/actuator/health",
+                ]
         deploy:
             resources:
                 limits:
@@ -210,8 +222,8 @@ services:
                 condition: service_healthy
         environment:
             SERVER_PORT: ${ORDER_SERVICE_PORT}
-            SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/${ORDER_DATABASE}"
-            SPRING_DATASOURCE_USERNAME: root
+            SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:${MYSQL_PORT}/${ORDER_DATABASE}"
+            SPRING_DATASOURCE_USERNAME: "${MYSQL_USER}"
             # SPRING_DATASOURCE_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
             INVENTORY_SERVICE_URL: "http://inventory-service:${INVENTORY_SERVICE_PORT}"
             SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:${KAFKA_PORT}"
@@ -222,7 +234,13 @@ services:
             - "${ORDER_SERVICE_PORT}"
         healthcheck:
             <<: *default-healthcheck
-            test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
+            test:
+                [
+                    "CMD",
+                    "curl",
+                    "-f",
+                    "http://localhost:${ORDER_SERVICE_PORT}/actuator/health",
+                ]
         deploy:
             resources:
                 limits:
@@ -245,12 +263,18 @@ services:
                 condition: service_healthy
         healthcheck:
             <<: *default-healthcheck
-            test: ["CMD", "curl", "-f", "http://localhost:8084/actuator/health"]
+            test:
+                [
+                    "CMD",
+                    "curl",
+                    "-f",
+                    "http://localhost:${NOTIFICATION_SERVICE_PORT}/actuator/health",
+                ]
         environment:
             SERVER_PORT: ${NOTIFICATION_SERVICE_PORT}
             SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:${KAFKA_PORT}"
             SPRING_MAIL_HOST: mailpit
-            SPRING_MAIL_PORT: 1025
+            SPRING_MAIL_PORT: ${MAILPIT_SMTP_PORT}
         deploy:
             resources:
                 limits:
@@ -275,7 +299,13 @@ services:
                 condition: service_healthy
         healthcheck:
             <<: *default-healthcheck
-            test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+            test:
+                [
+                    "CMD",
+                    "curl",
+                    "-f",
+                    "http://localhost:${API_GATEWAY_PORT}/actuator/health",
+                ]
         environment:
             SERVER_PORT: ${API_GATEWAY_PORT}
             INVENTORY_SERVICE_URL: "http://inventory-service:${INVENTORY_SERVICE_PORT}"
