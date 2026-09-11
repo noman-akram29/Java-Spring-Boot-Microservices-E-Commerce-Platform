@@ -26,71 +26,71 @@ stages:
     # ------------------------------------------------
     # STAGE 1: Build, Scan & Push (can run on feature branches)
     # ------------------------------------------------
-    # - stage: Build
-    #   displayName: Build, Scan & Push to ECR
-    #   jobs:
-    #       - job: BuildAndPush
-    #         displayName: Build, Scan & Push immutable images
-    #         steps:
-    #             - checkout: self
-    #               clean: true
-    #               fetchDepth: 1
+    - stage: Build
+      displayName: Build, Scan & Push to ECR
+      jobs:
+          - job: BuildAndPush
+            displayName: Build, Scan & Push immutable images
+            steps:
+                - checkout: self
+                  clean: true
+                  fetchDepth: 1
 
-    #             - task: AWSCLI@1
-    #               displayName: "Verify AWS OIDC identity"
-    #               inputs:
-    #                   awsCredentials: "AWS-ECR-OIDC"
-    #                   regionName: $(AWS_REGION)
-    #                   awsCommand: "sts"
-    #                   awsSubCommand: "get-caller-identity"
+                - task: AWSCLI@1
+                  displayName: "Verify AWS OIDC identity"
+                  inputs:
+                      awsCredentials: "AWS-ECR-OIDC"
+                      regionName: $(AWS_REGION)
+                      awsCommand: "sts"
+                      awsSubCommand: "get-caller-identity"
 
-    #             - task: AWSShellScript@1
-    #               displayName: "ECR Login + Build + Trivy Scan + Push"
-    #               inputs:
-    #                   awsCredentials: "AWS-ECR-OIDC"
-    #                   regionName: $(AWS_REGION)
-    #                   scriptType: "inline"
-    #                   inlineScript: |
-    #                       set -euo pipefail
+                - task: AWSShellScript@1
+                  displayName: "ECR Login + Build + Trivy Scan + Push"
+                  inputs:
+                      awsCredentials: "AWS-ECR-OIDC"
+                      regionName: $(AWS_REGION)
+                      scriptType: "inline"
+                      inlineScript: |
+                          set -euo pipefail
 
-    #                       echo "=== Caller identity ==="
-    #                       aws sts get-caller-identity
+                          echo "=== Caller identity ==="
+                          aws sts get-caller-identity
 
-    #                       echo "=== Logging in to ECR ==="
-    #                       aws ecr get-login-password --region $(AWS_REGION) | \
-    #                         docker login --username AWS --password-stdin $(ECR_REGISTRY)
+                          echo "=== Logging in to ECR ==="
+                          aws ecr get-login-password --region $(AWS_REGION) | \
+                            docker login --username AWS --password-stdin $(ECR_REGISTRY)
 
-    #                       echo "=== Building, Scanning, and Pushing services ==="
-    #                       for SERVICE in $(SERVICES); do
-    #                         echo "------------------------------------------------"
-    #                         echo "Building $SERVICE"
-    #                         echo "------------------------------------------------"
+                          echo "=== Building, Scanning, and Pushing services ==="
+                          for SERVICE in $(SERVICES); do
+                            echo "------------------------------------------------"
+                            echo "Building $SERVICE"
+                            echo "------------------------------------------------"
 
-    #                         DOCKER_BUILDKIT=1 docker build \
-    #                           --tag $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) \
-    #                           --file ${SERVICE}/Dockerfile \
-    #                           ${SERVICE}
+                            DOCKER_BUILDKIT=1 docker build \
+                              --tag $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) \
+                              --file ${SERVICE}/Dockerfile \
+                              ${SERVICE}
 
-    #                         echo "=== Trivy vulnerability scan (CRITICAL,HIGH) ==="
-    #                         docker run --rm \
-    #                           -v /var/run/docker.sock:/var/run/docker.sock \
-    #                           aquasec/trivy:latest image \
-    #                             --exit-code 1 \
-    #                             --severity CRITICAL,HIGH \
-    #                             --ignore-unfixed \
-    #                             --no-progress \
-    #                             $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
+                            echo "=== Trivy vulnerability scan (CRITICAL,HIGH) ==="
+                            docker run --rm \
+                              -v /var/run/docker.sock:/var/run/docker.sock \
+                              aquasec/trivy:latest image \
+                                --exit-code 1 \
+                                --severity CRITICAL,HIGH \
+                                --ignore-unfixed \
+                                --no-progress \
+                                $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
 
-    #                         echo "✓ ${SERVICE} passed Trivy scan"
+                            echo "✓ ${SERVICE} passed Trivy scan"
 
-    #                         echo "=== Pushing $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) ==="
-    #                         docker push $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
+                            echo "=== Pushing $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) ==="
+                            docker push $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
 
-    #                         echo "✓ $SERVICE done"
-    #                       done
+                            echo "✓ $SERVICE done"
+                          done
 
-    #                       echo ""
-    #                       echo "All images passed vulnerability gate and pushed successfully with tag: $(IMAGE_TAG)"
+                          echo ""
+                          echo "All images passed vulnerability gate and pushed successfully with tag: $(IMAGE_TAG)"
 
     # ------------------------------------------------
     # STAGE 2: Deploy (ONLY on main/staging)
