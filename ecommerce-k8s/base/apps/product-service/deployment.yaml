@@ -70,7 +70,7 @@ spec:
 
             containers:
                 - name: product-service
-                  image: "561531407742.dkr.ecr.ap-south-1.amazonaws.com/ecommerce/product-service:latest"
+                  image: "561531407742.dkr.ecr.ap-south-1.amazonaws.com/ecommerce/product-service:placeholder"
                   imagePullPolicy: IfNotPresent
                   ports:
                       - containerPort: 8082
