@@ -69,7 +69,7 @@ spec:
                           app.kubernetes.io/name: order-service
             containers:
                 - name: order-service
-                  image: "561531407742.dkr.ecr.ap-south-1.amazonaws.com/ecommerce/order-service:initial"
+                  image: "561531407742.dkr.ecr.ap-south-1.amazonaws.com/ecommerce/order-service"
                   ports:
                       - containerPort: 8083
                   envFrom:

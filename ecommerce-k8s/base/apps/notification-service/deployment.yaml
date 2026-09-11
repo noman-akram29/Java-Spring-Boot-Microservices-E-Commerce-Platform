@@ -71,7 +71,7 @@ spec:
 
             containers:
                 - name: notification-service
-                  image: "561531407742.dkr.ecr.ap-south-1.amazonaws.com/ecommerce/notification-service:initial"
+                  image: "561531407742.dkr.ecr.ap-south-1.amazonaws.com/ecommerce/notification-service"
                   imagePullPolicy: IfNotPresent
                   ports:
                       - containerPort: 8084
