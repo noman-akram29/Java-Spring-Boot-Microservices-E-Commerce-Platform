@@ -93,7 +93,7 @@ stages:
                           echo "All images passed vulnerability gate and pushed successfully with tag: $(IMAGE_TAG)"
 
     # ------------------------------------------------
-    # STAGE 2: Deploy (ONLY on main)
+    # STAGE 2: Deploy (ONLY on main/staging)
     # ------------------------------------------------
     - stage: Deploy
       displayName: Deploy to Kubernetes
