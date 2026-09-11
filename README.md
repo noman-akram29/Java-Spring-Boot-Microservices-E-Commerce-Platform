@@ -17,7 +17,7 @@ A scalable, event-driven microservices architecture for an e-commerce platform b
 
 - **Java 21**
 - **Spring Boot 3.3.12**
-- **Spring Cloud 2023.0.5**
+- **Spring Cloud 2025.0.3**
 - **Spring Data MongoDB & JPA**
 - **Spring Kafka**
 - **Docker & Docker Compose**
