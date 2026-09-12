@@ -6,21 +6,18 @@ import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-@FeignClient(
-    name = "inventory-service",
-    url = "${inventory.service.url}",
-	fallbackFactory = InventoryClientFallbackFactory.class
-)
+@FeignClient(name = "inventory-service", url = "${inventory.service.url}", fallbackFactory = InventoryClientFallbackFactory.class)
 public interface InventoryClient {
 
 	@GetMapping
 	boolean isInStock(
-		@RequestParam String skuCode,
-		@RequestParam Integer quantity
-	);
+			@RequestParam String skuCode,
+			@RequestParam Integer quantity);
 
 	@PostMapping("/decrease")
 	ResponseEntity<InventoryResponse> decreaseInventory(
-		@RequestBody InventoryRequest request
-	);
+			@RequestBody InventoryRequest request);
+
+	@PostMapping // maps to inventory-service's upsert endpoint, used for compensation
+	ResponseEntity<InventoryResponse> increaseInventory(@RequestBody InventoryRequest request);
 }

@@ -61,8 +61,8 @@ USER spring:spring
 
 EXPOSE 8084
 
-# Uncomment if Spring Boot Actuator is enabled
-# HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-#     CMD wget --quiet --tries=1 --spider http://localhost:8084/actuator/health || exit 1
+# Comment if Spring Boot Actuator is disabled
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD wget --quiet --tries=1 --spider http://localhost:8084/actuator/health || exit 1
 
 ENTRYPOINT [ "/app/entrypoint.sh" ]

@@ -34,6 +34,19 @@ stages:
                   clean: true
                   fetchDepth: 1
 
+                - script: |
+                      set -euo pipefail
+                      echo "=== Running unit tests ==="
+                      for SERVICE in $(SERVICES); do
+                        if [ -f "${SERVICE}/pom.xml" ]; then
+                          echo "------------------------------------------------"
+                          echo "Tests: ${SERVICE}"
+                          (cd "${SERVICE}" && chmod +x mvnw && ./mvnw -B test -q)
+                        fi
+                      done
+                      echo "✓ All module tests passed"
+                  displayName: "Unit tests"
+
                 - task: AWSCLI@1
                   displayName: "Verify AWS OIDC identity"
                   inputs:

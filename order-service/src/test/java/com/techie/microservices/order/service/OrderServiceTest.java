@@ -33,120 +33,122 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class OrderServiceTest {
 
-    @Mock
-    private OrderRepository orderRepository;
+        @Mock
+        private OrderRepository orderRepository;
 
-    @Mock
-    private OutboxRepository outboxRepository;
+        @Mock
+        private OutboxRepository outboxRepository;
 
-    @Mock
-    private IdempotencyRepository idempotencyRepository;
+        @Mock
+        private IdempotencyRepository idempotencyRepository;
 
-    @Mock
-    private InventoryClient inventoryClient;
+        @Mock
+        private InventoryClient inventoryClient;
 
-    @Mock
-    private ObjectMapper objectMapper;
+        @Mock
+        private ObjectMapper objectMapper;
 
-    @InjectMocks
-    private OrderService orderService;
+        @InjectMocks
+        private OrderService orderService;
 
-    private OrderRequest orderRequest;
-    private final String idempotencyKey = "test-idempotency-key-123";
+        private OrderRequest orderRequest;
+        private final String idempotencyKey = "test-idempotency-key-123";
 
-    @BeforeEach
-    void setUp() {
-        orderRequest = new OrderRequest(
-                null,   //id
-                null,   //orderNumber
-                "charger_x1",   //skuCode
-                "charger_x1",   //productId
-                5,  //quanity
-                new BigDecimal("100.00"),   //price
-                new UserDetails("test@example.com", "Test", "User")
-        );
-    }
+        @BeforeEach
+        void setUp() {
+                orderRequest = new OrderRequest(
+                                null, // id
+                                null, // orderNumber
+                                "charger_x1", // skuCode
+                                "charger_x1", // productId
+                                5, // quantity
+                                new BigDecimal("100.00"), // price
+                                new UserDetails("test@example.com", "Test", "User"));
+        }
 
-    @Test
-    void shouldReturnFailedWhenInventoryReservationFails() {
-        // given
-        when(idempotencyRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
-        when(inventoryClient.decreaseInventory(any(InventoryRequest.class)))
-                .thenThrow(new RuntimeException("Insufficient stock"));
+        @Test
+        void shouldReturnFailedWhenInventoryReservationFails() {
+                // given
+                when(idempotencyRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
+                when(inventoryClient.decreaseInventory(any(InventoryRequest.class)))
+                                .thenThrow(new RuntimeException("Insufficient stock"));
 
-        // when
-        OrderResponse response = orderService.placeOrder(idempotencyKey, orderRequest);
+                // when
+                OrderResponse response = orderService.placeOrder(idempotencyKey, orderRequest);
 
-        // then
-        assertThat(response.status()).isEqualTo("FAILED");
-        assertThat(response.message()).contains("out of stock");
-        assertThat(response.orderNumber()).isNull();
+                // then
+                assertThat(response.status()).isEqualTo("FAILED");
+                assertThat(response.message()).contains("out of stock");
+                assertThat(response.orderNumber()).isNull();
 
-        verify(orderRepository, never()).save(any());
-        verify(outboxRepository, never()).save(any());
-        verify(idempotencyRepository, never()).save(any());
-    }
+                verify(orderRepository, never()).save(any());
+                verify(outboxRepository, never()).save(any());
+                // Idempotency record is saved upfront and then cleaned up via compensating
+                // delete on failure
+                verify(idempotencyRepository, atLeastOnce()).save(any(IdempotencyRecord.class));
+                verify(idempotencyRepository, atLeastOnce()).delete(any(IdempotencyRecord.class));
+        }
 
-    @Test
-    void shouldReturnFailedWhenInventoryReturnsNon2xx() {
-        // given
-        when(idempotencyRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
-        when(inventoryClient.decreaseInventory(any(InventoryRequest.class)))
-                .thenReturn(ResponseEntity.badRequest().build());
+        @Test
+        void shouldReturnFailedWhenInventoryReturnsNon2xx() {
+                // given
+                when(idempotencyRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
+                when(inventoryClient.decreaseInventory(any(InventoryRequest.class)))
+                                .thenReturn(ResponseEntity.badRequest().build());
 
-        // when
-        OrderResponse response = orderService.placeOrder(idempotencyKey, orderRequest);
+                // when
+                OrderResponse response = orderService.placeOrder(idempotencyKey, orderRequest);
 
-        // then
-        assertThat(response.status()).isEqualTo("FAILED");
-        assertThat(response.orderNumber()).isNull();
+                // then
+                assertThat(response.status()).isEqualTo("FAILED");
+                assertThat(response.orderNumber()).isNull();
 
-        verify(orderRepository, never()).save(any());
-        verify(outboxRepository, never()).save(any());
-        verify(idempotencyRepository, never()).save(any());
-    }
+                verify(orderRepository, never()).save(any());
+                verify(outboxRepository, never()).save(any());
+                // Idempotency record is saved upfront and then cleaned up via compensating
+                // delete on failure
+                verify(idempotencyRepository, atLeastOnce()).save(any(IdempotencyRecord.class));
+                verify(idempotencyRepository, atLeastOnce()).delete(any(IdempotencyRecord.class));
+        }
 
-    @Test
-    void shouldSaveOrderAndOutboxWhenInventorySucceeds() throws Exception {
-        // given
-        when(idempotencyRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
+        @Test
+        void shouldSaveOrderAndOutboxWhenInventorySucceeds() throws Exception {
+                // given
+                when(idempotencyRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
 
-        InventoryResponse invResponse = new InventoryResponse(1L, "charger_x1", 10);
-        when(inventoryClient.decreaseInventory(any(InventoryRequest.class)))
-                .thenReturn(ResponseEntity.ok(invResponse));
+                InventoryResponse invResponse = new InventoryResponse(1L, "charger_x1", 10);
+                when(inventoryClient.decreaseInventory(any(InventoryRequest.class)))
+                                .thenReturn(ResponseEntity.ok(invResponse));
 
-        when(objectMapper.writeValueAsString(any()))
-                .thenReturn("{\"orderNumber\":\"123\",\"email\":\"test@example.com\"}");
+                when(objectMapper.writeValueAsString(any()))
+                                .thenReturn("{\"orderNumber\":\"123\",\"email\":\"test@example.com\"}");
 
-        when(orderRepository.save(any(Order.class)))
-                .thenAnswer(invocation -> {
-                    Order order = invocation.getArgument(0);
-                    return order;
-                });
+                when(orderRepository.save(any(Order.class)))
+                                .thenAnswer(invocation -> invocation.getArgument(0));
 
-        when(idempotencyRepository.save(any(IdempotencyRecord.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
+                when(idempotencyRepository.save(any(IdempotencyRecord.class)))
+                                .thenAnswer(invocation -> invocation.getArgument(0));
 
-        // when
-        OrderResponse response = orderService.placeOrder(idempotencyKey, orderRequest);
+                // when
+                OrderResponse response = orderService.placeOrder(idempotencyKey, orderRequest);
 
-        // then
-        assertThat(response.status()).isEqualTo("SUCCESS");
-        assertThat(response.orderNumber()).isNotNull();
+                // then
+                assertThat(response.status()).isEqualTo("SUCCESS");
+                assertThat(response.orderNumber()).isNotNull();
 
-        // Order was saved
-        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
-        verify(orderRepository).save(orderCaptor.capture());
-        assertThat(orderCaptor.getValue().getSkuCode()).isEqualTo("charger_x1");
-        assertThat(orderCaptor.getValue().getQuantity()).isEqualTo(5);
+                // Order was saved
+                ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+                verify(orderRepository).save(orderCaptor.capture());
+                assertThat(orderCaptor.getValue().getSkuCode()).isEqualTo("charger_x1");
+                assertThat(orderCaptor.getValue().getQuantity()).isEqualTo(5);
 
-        // Outbox was saved
-        ArgumentCaptor<OutboxEvent> outboxCaptor = ArgumentCaptor.forClass(OutboxEvent.class);
-        verify(outboxRepository).save(outboxCaptor.capture());
-        assertThat(outboxCaptor.getValue().getEventType()).isEqualTo("OrderPlaced");
-        assertThat(outboxCaptor.getValue().getAggregateType()).isEqualTo("Order");
+                // Outbox was saved
+                ArgumentCaptor<OutboxEvent> outboxCaptor = ArgumentCaptor.forClass(OutboxEvent.class);
+                verify(outboxRepository).save(outboxCaptor.capture());
+                assertThat(outboxCaptor.getValue().getEventType()).isEqualTo("OrderPlaced");
+                assertThat(outboxCaptor.getValue().getAggregateType()).isEqualTo("Order");
 
-        // Idempotency record was saved
-        verify(idempotencyRepository).save(any(IdempotencyRecord.class));
-    }
+                // Idempotency record was saved
+                verify(idempotencyRepository).save(any(IdempotencyRecord.class));
+        }
 }

@@ -23,34 +23,23 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
             FilterChain filterChain)
             throws ServletException, IOException {
 
-        String correlationId =
-                request.getHeader(HEADER);
+        String correlationId = sanitize(request.getHeader(HEADER));
 
-        if (correlationId == null) {
-            correlationId = "missing";
-        }
-
-        MDC.put(
-            HEADER,
-            correlationId
-        );
-
-        response.setHeader(
-            HEADER,
-            correlationId
-        );
+        MDC.put(HEADER, correlationId);
+        response.setHeader(HEADER, correlationId);
 
         try {
-
-            filterChain.doFilter(
-                    request,
-                    response
-            );
-
+            filterChain.doFilter(request, response);
         } finally {
-
             MDC.remove(HEADER);
-
         }
+    }
+
+    private String sanitize(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "missing";
+        }
+        String cleaned = raw.replaceAll("[^a-zA-Z0-9-]", "");
+        return cleaned.isEmpty() ? "missing" : cleaned.substring(0, Math.min(cleaned.length(), 64));
     }
 }

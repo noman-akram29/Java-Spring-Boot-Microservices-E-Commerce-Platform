@@ -14,6 +14,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.List;
 
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -30,16 +33,18 @@ public class OutboxPublisher {
 
         for (OutboxEvent event : events) {
             try {
-                OrderPlacedEvent payload =
-                        objectMapper.readValue(event.getPayload(), OrderPlacedEvent.class);
+                OrderPlacedEvent payload = objectMapper.readValue(event.getPayload(), OrderPlacedEvent.class);
 
-                kafkaTemplate.send("order-placed", payload).get(); // wait for ack
+                // kafkaTemplate.send("order-placed", payload).get(); // wait for ack
+                kafkaTemplate.send("order-placed", payload).get(3, TimeUnit.SECONDS); // bounded wait
 
                 event.setProcessed(true);
                 event.setProcessedAt(Instant.now());
                 outboxRepository.save(event);
 
                 log.info("Outbox event published: {}", event.getAggregateId());
+            } catch (TimeoutException e) {
+                log.error("Timed out publishing outbox event id={} — will retry next poll", event.getId());
             } catch (Exception e) {
                 log.error("Failed to publish outbox event id={}", event.getId(), e);
                 // leave processed=false → will retry on next poll

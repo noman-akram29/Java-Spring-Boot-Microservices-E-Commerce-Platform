@@ -313,6 +313,7 @@ services:
             ORDER_SERVICE_URL: "http://order-service:${ORDER_SERVICE_PORT}"
             GATEWAY_AUTH_USERNAME: ${GATEWAY_AUTH_USERNAME:-gateway}
             GATEWAY_AUTH_PASSWORD: ${GATEWAY_AUTH_PASSWORD}
+            GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET}
         ports:
             - "${API_GATEWAY_PORT}:8080"
         deploy:

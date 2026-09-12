@@ -103,6 +103,11 @@ spec:
                             secretKeyRef:
                                 name: api-gateway-auth
                                 key: password
+                      - name: GATEWAY_JWT_SECRET
+                        valueFrom:
+                            secretKeyRef:
+                                name: api-gateway-auth
+                                key: jwt-secret
                   envFrom:
                       - configMapRef:
                             name: api-gateway-config

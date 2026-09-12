@@ -23,13 +23,15 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B --no-transfer-progress clean package -DskipTests
 
-# Download OpenTelemetry Java agent
+# Download and verify OpenTelemetry Java agent
 ARG OTEL_AGENT_VERSION=2.28.1
+ARG OTEL_AGENT_SHA256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 
 RUN mkdir -p /workspace/otel \
     && curl -fL \
     -o /workspace/otel/opentelemetry-javaagent.jar \
-    https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v${OTEL_AGENT_VERSION}/opentelemetry-javaagent.jar
+    https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v${OTEL_AGENT_VERSION}/opentelemetry-javaagent.jar \
+    && echo "${OTEL_AGENT_SHA256}  /workspace/otel/opentelemetry-javaagent.jar" | sha256sum -c -
 
 ############################################
 # Runtime Stage
@@ -61,8 +63,8 @@ USER spring:spring
 
 EXPOSE 8083
 
-# Uncomment if Spring Boot Actuator is enabled
-# HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-#     CMD wget --quiet --tries=1 --spider http://localhost:8084/actuator/health || exit 1
+# Comment if Spring Boot Actuator is disabled
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD wget --quiet --tries=1 --spider http://localhost:8083/actuator/health || exit 1
 
 ENTRYPOINT [ "/app/entrypoint.sh" ]

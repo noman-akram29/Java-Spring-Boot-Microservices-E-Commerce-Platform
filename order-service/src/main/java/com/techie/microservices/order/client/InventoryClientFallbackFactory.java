@@ -27,8 +27,13 @@ public class InventoryClientFallbackFactory
 
                 throw new RuntimeException(
                         "Inventory service unavailable",
-                        cause
-                );
+                        cause);
+            }
+
+            // matching fallback method
+            @Override
+            public ResponseEntity<InventoryResponse> increaseInventory(InventoryRequest request) {
+                throw new RuntimeException("Inventory service unavailable", cause);
             }
         };
     }
