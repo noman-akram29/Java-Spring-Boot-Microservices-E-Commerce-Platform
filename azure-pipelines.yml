@@ -1,7 +1,5 @@
 # azure-pipelines.yml
-# Production CI/CD - Step 1 Hardening with Trivy Vulnerability Scanning
-# Build runs on feature/cicd + main
-# Deploy runs ONLY on main
+# Production CI/CD - Step 1 Hardening with Trivy Vulnerability Scanning & Syft SBOM
 
 trigger:
     branches:
@@ -24,13 +22,13 @@ pool:
 
 stages:
     # ------------------------------------------------
-    # STAGE 1: Build, Scan & Push (can run on feature branches)
+    # STAGE 1: Build, Scan, SBOM & Push
     # ------------------------------------------------
     - stage: Build
-      displayName: Build, Scan & Push to ECR
+      displayName: Build, Scan, SBOM & Push to ECR
       jobs:
           - job: BuildAndPush
-            displayName: Build, Scan & Push immutable images
+            displayName: Build, Scan, SBOM & Push immutable images
             steps:
                 - checkout: self
                   clean: true
@@ -45,7 +43,7 @@ stages:
                       awsSubCommand: "get-caller-identity"
 
                 - task: AWSShellScript@1
-                  displayName: "ECR Login + Build + Trivy Scan + Push"
+                  displayName: "ECR Login + Build + Trivy + Syft + Push"
                   inputs:
                       awsCredentials: "AWS-ECR-OIDC"
                       regionName: $(AWS_REGION)
@@ -60,7 +58,10 @@ stages:
                           aws ecr get-login-password --region $(AWS_REGION) | \
                             docker login --username AWS --password-stdin $(ECR_REGISTRY)
 
-                          echo "=== Building, Scanning, and Pushing services ==="
+                          # Prepare local directory for SBOMs
+                          mkdir -p "$PWD/sbom-output"
+
+                          echo "=== Building, Scanning, SBOM Generation, and Pushing services ==="
                           for SERVICE in $(SERVICES); do
                             echo "------------------------------------------------"
                             echo "Building $SERVICE"
@@ -83,17 +84,39 @@ stages:
 
                             echo "✓ ${SERVICE} passed Trivy scan"
 
+                            echo "=== Generating Syft SBOM for ${SERVICE} ==="
+                            docker run --rm \
+                              -v /var/run/docker.sock:/var/run/docker.sock \
+                              -v "$PWD/sbom-output:/out" \
+                              anchore/syft:latest \
+                              $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) \
+                              -o spdx-json=/out/${SERVICE}-$(IMAGE_TAG).spdx.json \
+                              -o syft-json=/out/${SERVICE}-$(IMAGE_TAG).syft.json
+
+                            echo "✓ SBOM generated for ${SERVICE}"
+
                             echo "=== Pushing $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG) ==="
                             docker push $(ECR_REGISTRY)/ecommerce/${SERVICE}:$(IMAGE_TAG)
 
                             echo "✓ $SERVICE done"
                           done
 
+                          # Copy SBOMs safely to Artifact Staging Directory
+                          mkdir -p "$(Build.ArtifactStagingDirectory)/sbom"
+                          cp -r sbom-output/* "$(Build.ArtifactStagingDirectory)/sbom/" 2>/dev/null || true
+
                           echo ""
-                          echo "All images passed vulnerability gate and pushed successfully with tag: $(IMAGE_TAG)"
+                          echo "All images passed vulnerability gates, generated SBOMs, and pushed successfully!"
+
+                - task: PublishBuildArtifacts@1
+                  displayName: "Publish SBOMs"
+                  inputs:
+                      pathToPublish: "$(Build.ArtifactStagingDirectory)/sbom"
+                      artifactName: "sbom"
+                      publishLocation: "Container"
 
     # ------------------------------------------------
-    # STAGE 2: Deploy (ONLY on main/staging)
+    # STAGE 2: Deploy (ONLY on staging/main)
     # ------------------------------------------------
     - stage: Deploy
       displayName: Deploy to Kubernetes
@@ -107,9 +130,7 @@ stages:
                   clean: true
                   fetchDepth: 1
 
-                # ------------------------------------------------
                 # 2.1 Verify all images exist in ECR (fail fast)
-                # ------------------------------------------------
                 - task: AWSShellScript@1
                   displayName: "Verify all images exist in ECR"
                   inputs:
@@ -142,9 +163,7 @@ stages:
                           echo ""
                           echo "All 5 images verified successfully."
 
-                # ------------------------------------------------
-                # 2.2 Deploy (only runs if verification passed)
-                # ------------------------------------------------
+                # 2.2 Deploy
                 - script: |
                       set -euo pipefail
 
@@ -157,9 +176,6 @@ stages:
                       kubectl auth can-i patch deployments -n "$NS"
                       kubectl config current-context
 
-                      # ------------------------------------------------
-                      # 1. Update images + wait for rollout
-                      # ------------------------------------------------
                       for SERVICE in $SERVICES; do
                         IMAGE="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
                         echo "------------------------------------------------"
@@ -173,9 +189,6 @@ stages:
                         echo "OK ${SERVICE} rollout completed"
                       done
 
-                      # ------------------------------------------------
-                      # 2. Production-grade post-deployment verification
-                      # ------------------------------------------------
                       echo ""
                       echo "=== Post-deployment verification ==="
 
@@ -184,7 +197,6 @@ stages:
                         echo "------------------------------------------------"
                         echo "Verifying ${SERVICE}"
 
-                        # 2.1 Image must match exactly
                         CURRENT_IMAGE=$(kubectl get deploy "${SERVICE}" -n "$NS" \
                           -o jsonpath='{.spec.template.spec.containers[0].image}')
 
@@ -195,7 +207,6 @@ stages:
                         fi
                         echo "✓ Image matches: ${CURRENT_IMAGE}"
 
-                        # 2.2 Deployment must be fully Ready
                         READY=$(kubectl get deploy "${SERVICE}" -n "$NS" -o jsonpath='{.status.readyReplicas}')
                         DESIRED=$(kubectl get deploy "${SERVICE}" -n "$NS" -o jsonpath='{.status.replicas}')
 

@@ -8,16 +8,20 @@ import com.techie.microservices.order.dto.OrderResponse;
 import com.techie.microservices.order.event.OrderPlacedEvent;
 import com.techie.microservices.order.external.dto.InventoryRequest;
 import com.techie.microservices.order.external.dto.InventoryResponse;
+import com.techie.microservices.order.model.IdempotencyRecord;
 import com.techie.microservices.order.model.Order;
 import com.techie.microservices.order.model.OutboxEvent;
+import com.techie.microservices.order.repository.IdempotencyRepository;
 import com.techie.microservices.order.repository.OrderRepository;
 import com.techie.microservices.order.repository.OutboxRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -27,11 +31,23 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final OutboxRepository outboxRepository;
+    private final IdempotencyRepository idempotencyRepository;
     private final InventoryClient inventoryClient;
     private final ObjectMapper objectMapper;
 
     @Transactional
-    public OrderResponse placeOrder(OrderRequest orderRequest) {
+    public OrderResponse placeOrder(String idempotencyKey, OrderRequest orderRequest) {
+
+        // 0. CHECK IDEMPOTENCY (Replay protection)
+        Optional<IdempotencyRecord> existingRecord = idempotencyRepository.findByIdempotencyKey(idempotencyKey);
+        if (existingRecord.isPresent()) {
+            log.info("Idempotency key match found. Returning cached order response for key: {}", idempotencyKey);
+            return new OrderResponse(
+                    existingRecord.get().getOrderNumber(),
+                    "SUCCESS",
+                    "Order already placed (idempotent replay)"
+            );
+        }
 
         // 1. ATOMICALLY RESERVE/DECREASE INVENTORY
         ResponseEntity<InventoryResponse> response;
@@ -93,7 +109,25 @@ public class OrderService {
 
         outboxRepository.save(outboxEvent);
 
-        log.info("Order and Outbox saved: {}", order.getOrderNumber());
+        // 3. SAVE IDEMPOTENCY RECORD (With concurrent race condition safety)
+        IdempotencyRecord idempotencyRecord = new IdempotencyRecord();
+        idempotencyRecord.setIdempotencyKey(idempotencyKey);
+        idempotencyRecord.setOrderNumber(order.getOrderNumber());
+
+        try {
+            idempotencyRepository.save(idempotencyRecord);
+        } catch (DataIntegrityViolationException e) {
+            log.warn("Concurrent idempotency key collision detected for key: {}", idempotencyKey);
+            IdempotencyRecord winnerRecord = idempotencyRepository.findByIdempotencyKey(idempotencyKey)
+                    .orElseThrow(() -> new IllegalStateException("Idempotency recovery failed after collision"));
+            return new OrderResponse(
+                    winnerRecord.getOrderNumber(),
+                    "SUCCESS",
+                    "Order already placed (concurrent replay)"
+            );
+        }
+
+        log.info("Order, Outbox, and Idempotency saved: {}", order.getOrderNumber());
 
         return new OrderResponse(
                 order.getOrderNumber(),
