@@ -37,11 +37,7 @@ services:
             - ./mongodb:/docker-entrypoint-initdb.d.template:ro
             - mongodb-init-rendered:/docker-entrypoint-initdb.d
         command: >
-            sh -c "
-            sed 's/__PRODUCT_APP_PASSWORD__/'\"$$MONGO_PRODUCT_PASSWORD\"'/' 
-                /docker-entrypoint-initdb.d.template/init-product-user.js.template > /docker-entrypoint-initdb.d/init-product-user.js &&
-            exec docker-entrypoint.sh mongod
-            "
+            sh -c "sed 's/__PRODUCT_APP_PASSWORD__/'\"$$MONGO_PRODUCT_PASSWORD\"'/' /docker-entrypoint-initdb.d.template/init-product-user.js.template > /docker-entrypoint-initdb.d/init-product-user.js && exec docker-entrypoint.sh mongod"
         deploy:
             resources:
                 limits:
@@ -74,12 +70,7 @@ services:
             - ./mysql:/docker-entrypoint-initdb.d.template:ro
             - mysql-init-rendered:/docker-entrypoint-initdb.d
         command: >
-            sh -c "
-            sed -e 's/__INVENTORY_APP_PASSWORD__/'\"$$MYSQL_INVENTORY_PASSWORD\"'/'
-                -e 's/__ORDER_APP_PASSWORD__/'\"$$MYSQL_ORDER_PASSWORD\"'/'
-                /docker-entrypoint-initdb.d.template/init.sql.template > /docker-entrypoint-initdb.d/init.sql &&
-            exec docker-entrypoint.sh mysqld
-            "
+            sh -c "sed 's/__INVENTORY_APP_PASSWORD__/'\"$$MYSQL_INVENTORY_PASSWORD\"'/g; s/__ORDER_APP_PASSWORD__/'\"$$MYSQL_ORDER_PASSWORD\"'/g' /docker-entrypoint-initdb.d.template/init.sql.template > /docker-entrypoint-initdb.d/init.sql && exec docker-entrypoint.sh mysqld"
         deploy:
             resources:
                 limits:
@@ -335,6 +326,8 @@ volumes:
     mongodb-data:
     mysql-data:
     kafka-data:
+    mysql-init-rendered:
+    mongodb-init-rendered:
 
 networks:
     ecommerce-network:
