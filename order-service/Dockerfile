@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/root/.m2 \
 
 # Download and verify OpenTelemetry Java agent
 ARG OTEL_AGENT_VERSION=2.28.1
-ARG OTEL_AGENT_SHA256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARG OTEL_AGENT_SHA256=faa89bdeebf9b1f52be4a4374689176717b02a59df2d8f8b6eb9aa39f9292589
 
 RUN mkdir -p /workspace/otel \
     && curl -fL \

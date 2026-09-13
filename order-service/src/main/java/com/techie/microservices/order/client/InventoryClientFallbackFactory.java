@@ -8,12 +8,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 
 @Component
-public class InventoryClientFallbackFactory
-        implements FallbackFactory<InventoryClient> {
+public class InventoryClientFallbackFactory implements FallbackFactory<InventoryClient> {
 
     @Override
     public InventoryClient create(Throwable cause) {
-
         return new InventoryClient() {
 
             @Override
@@ -22,18 +20,14 @@ public class InventoryClientFallbackFactory
             }
 
             @Override
-            public ResponseEntity<InventoryResponse> decreaseInventory(
-                    InventoryRequest request) {
-
-                throw new RuntimeException(
-                        "Inventory service unavailable",
-                        cause);
+            public ResponseEntity<InventoryResponse> decreaseInventory(InventoryRequest request) {
+                // Return non-2xx so OrderService can handle gracefully (no uncaught exception)
+                return ResponseEntity.status(503).build();
             }
 
-            // matching fallback method
             @Override
             public ResponseEntity<InventoryResponse> increaseInventory(InventoryRequest request) {
-                throw new RuntimeException("Inventory service unavailable", cause);
+                return ResponseEntity.status(503).build();
             }
         };
     }

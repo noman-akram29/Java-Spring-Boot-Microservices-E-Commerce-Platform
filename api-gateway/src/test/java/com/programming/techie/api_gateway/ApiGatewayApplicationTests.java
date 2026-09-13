@@ -1,8 +1,10 @@
 package com.programming.techie.api_gateway;
 
+import com.programming.techie.api_gateway.service.JwtService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -10,6 +12,9 @@ class ApiGatewayApplicationTests {
 
 	@Autowired
 	private WebTestClient webTestClient;
+
+	@Autowired
+	private JwtService jwtService;
 
 	@Test
 	void unauthenticatedRequest_isRejected() {
@@ -26,21 +31,41 @@ class ApiGatewayApplicationTests {
 	}
 
 	@Test
-	void authenticatedRequest_withCorrectCredentials_isAccepted() {
-		// downstream services aren't running in this slice test, so we only assert
-		// that AUTH itself passes (no 401) — routing/proxying is covered by the
-		// ApiGatewayConfig route test below, and by full end-to-end tests.
-		webTestClient.get().uri("/api/order")
-				.headers(h -> h.setBasicAuth("test-gateway", "test-password-not-for-prod"))
+	void loginEndpoint_isPubliclyAccessible() {
+		webTestClient.post().uri("/auth/login")
+				.header(HttpHeaders.CONTENT_TYPE, "application/json")
+				.bodyValue("{\"username\":\"test-gateway\",\"password\":\"test-password-not-for-prod\"}")
 				.exchange()
-				.expectStatus().is5xxServerError(); // 401 would mean auth failed; 5xx here just means "no backend" —
-													// that's expected in this slice
+				.expectStatus().isOk()
+				.expectBody()
+				.jsonPath("$.accessToken").isNotEmpty()
+				.jsonPath("$.tokenType").isEqualTo("Bearer");
 	}
 
 	@Test
-	void wrongPassword_isRejected() {
+	void authenticatedRequest_withValidJwt_passesAuth() {
+		// No backend in this slice test → 5xx is OK; 401 would mean auth failed
+		String token = jwtService.createToken("test-gateway");
+
 		webTestClient.get().uri("/api/order")
-				.headers(h -> h.setBasicAuth("test-gateway", "wrong-password"))
+				.header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+				.exchange()
+				.expectStatus().is5xxServerError();
+	}
+
+	@Test
+	void request_withInvalidJwt_isRejected() {
+		webTestClient.get().uri("/api/order")
+				.header(HttpHeaders.AUTHORIZATION, "Bearer this.is.not.a.valid.jwt")
+				.exchange()
+				.expectStatus().isUnauthorized();
+	}
+
+	@Test
+	void login_withWrongPassword_isRejected() {
+		webTestClient.post().uri("/auth/login")
+				.header(HttpHeaders.CONTENT_TYPE, "application/json")
+				.bodyValue("{\"username\":\"test-gateway\",\"password\":\"wrong-password\"}")
 				.exchange()
 				.expectStatus().isUnauthorized();
 	}

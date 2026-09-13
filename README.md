@@ -6,138 +6,177 @@ A scalable, event-driven microservices architecture for an e-commerce platform b
 
 - **Product Service**: Product catalog management with MongoDB
 - **Inventory Service**: Real-time inventory tracking with MySQL
-- **Order Service**: Order processing with event-driven architecture
+- **Order Service**: Order processing with event-driven architecture (idempotency + transactional outbox)
 - **Notification Service**: Email notifications for order updates
-- **API Gateway**: Single entry point with request routing and load balancing
+- **API Gateway**: Single entry point with JWT-based OAuth2 resource server security, request routing and load balancing
 - **Event-Driven Architecture**: Apache Kafka for asynchronous communication
 - **Containerized**: Docker and Docker Compose for easy deployment
-- **API Documentation**: Integrated Swagger UI for all services
+- **API Documentation**: Integrated Swagger UI (aggregated at the gateway)
+- **Observability**: Actuator, Prometheus metrics, OpenTelemetry agent in images
 
 ## 🛠️ Tech Stack
 
 - **Java 21**
-- **Spring Boot 3.3.12**
+- **Spring Boot 3.5.16**
 - **Spring Cloud 2025.0.3**
 - **Spring Data MongoDB & JPA**
 - **Spring Kafka**
+- **Spring Security + OAuth2 Resource Server (JWT HS256)**
 - **Docker & Docker Compose**
-- **MySQL 8.3.0**
-- **MongoDB 7.0.5**
-- **Apache Kafka 7.5.0**
-- **OpenAPI 3.0**
+- **MySQL 8.4**
+- **MongoDB 7**
+- **Apache Kafka 3.9** (KRaft)
+- **OpenAPI 3.0 / springdoc**
 
 ## 📦 Prerequisites
 
 - Java 21 or later
 - Docker Desktop (with Docker Compose)
-- Maven 3.9.x or later
+- Maven 3.9.x or later (or use the included `mvnw` wrappers)
 - Git
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Local with Docker Compose)
 
 1. **Clone the repository**
    ```bash
-   git clone <repository-url>
-   cd spring-boot-microservices
+   git clone https://github.com/noman-akram29/Java-Spring-Boot-Microservices-E-Commerce-Platform.git
+   cd Java-Spring-Boot-Microservices-E-Commerce-Platform
+   git checkout staging
    ```
 
-2. **Build the project**
+2. **Create local secrets (required)**
    ```bash
-   mvn clean install
+   mkdir -p secrets
+   echo "changeme_local_dev_only" > secrets/mysql_root_password.txt
+   echo "changeme_local_dev_only" > secrets/mongo_root_password.txt
    ```
 
-3. **Start the services**
+3. **Create `.env` from the example**
    ```bash
-   docker-compose up -d
+   cp .env.example .env
    ```
-   This will start all services and required infrastructure (Kafka, MySQL, MongoDB, etc.)
-
-4. **Verify services are running**
+   Edit `.env` and set a **strong JWT secret** (≥ 32 characters):
    ```bash
-   docker-compose ps
+   GATEWAY_JWT_SECRET=ThisIsAVerySecure32ByteOrLongerSecretKey!!
+   ```
+   (Keep other defaults for local development.)
+
+4. **Start everything**
+   ```bash
+   docker compose up -d --build
    ```
 
-## 🌐 Access Services
+5. **Verify services are healthy**
+   ```bash
+   docker compose ps
+   ```
 
-| Service | URL | Port |
-|---------|-----|------|
-| API Gateway | http://localhost:8080 | 8080 |
-| Product Service | http://localhost:8081 | 8081 |
-| Order Service | http://localhost:8083 | 8083 |
-| Inventory Service | http://localhost:8082 | 8082 |
-| Notification Service | http://localhost:8084 | 8084 |
-| Kafka UI | http://localhost:8086 | 8086 |
+6. **Smoke test JWT login**
+   ```bash
+   TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
+     -H "Content-Type: application/json" \
+     -d '{"username":"gateway","password":"changeme_local_dev_only"}' | jq -r .accessToken)
+
+   echo "Token: $TOKEN"
+
+   curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/product | jq
+   ```
+
+## 🌐 Access Services (correct ports)
+
+| Service                | URL                                      | Port |
+|------------------------|------------------------------------------|------|
+| API Gateway            | http://localhost:8080                    | 8080 |
+| Product Service        | http://localhost:8082                    | 8082 |
+| Inventory Service      | http://localhost:8081                    | 8081 |
+| Order Service          | http://localhost:8083                    | 8083 |
+| Notification Service   | http://localhost:8084                    | 8084 |
+| Mailpit UI             | http://localhost:8025                    | 8025 |
+
+> **Note:** Direct service ports are exposed for debugging. In normal use go through the API Gateway on port 8080.
 
 ## 📚 API Documentation
 
-Access Swagger UI for API documentation:
+- **Aggregated Swagger UI (recommended)**: http://localhost:8080/swagger-ui.html
+- Product Service (direct): http://localhost:8082/swagger-ui.html (if enabled)
+- Order Service (direct): http://localhost:8083/swagger-ui.html (if enabled)
+- Inventory Service (direct): http://localhost:8081/swagger-ui.html (if enabled)
 
-- **API Gateway (All Services)**: http://localhost:8080/swagger-ui.html
-- **Product Service**: http://localhost:8081/swagger-ui.html
-- **Order Service**: http://localhost:8083/swagger-ui.html
-- **Inventory Service**: http://localhost:8082/swagger-ui.html
+All protected endpoints require a valid JWT obtained from `POST /auth/login`.
 
 ## 🧪 Running Tests
 
-To run tests for all services:
+Each service has its own Maven wrapper. From the service directory:
 
 ```bash
-mvn test
+cd product-service && ./mvnw test
+cd ../inventory-service && ./mvnw test
+# … same for order-service, notification-service, api-gateway
 ```
 
-For individual service tests, navigate to the service directory and run:
-
-```bash
-cd <service-directory>
-mvn test
-```
+Or run them all via the Azure pipeline / CI.
 
 ## 🧩 Project Structure
 
 ```
 .
-├── api-gateway/           # API Gateway service
-├── product-service/       # Product management service
-├── order-service/         # Order processing service
-├── inventory-service/     # Inventory management service
-├── notification-service/  # Notification service
-├── docker-compose.yml     # Docker Compose configuration
-└── README.md             # This file
+├── api-gateway/           # API Gateway (Spring Cloud Gateway + JWT)
+├── product-service/       # Product catalog (MongoDB)
+├── inventory-service/     # Inventory (MySQL)
+├── order-service/         # Orders + Idempotency + Outbox (MySQL + Kafka)
+├── notification-service/  # Email notifications (Kafka consumer)
+├── ecommerce-k8s/         # Kubernetes manifests (base + overlays)
+├── mysql/                 # MySQL init scripts for Docker Compose
+├── docker-compose.yml
+├── .env.example
+├── azure-pipelines.yml
+└── README.md
 ```
 
 ## 🔄 Service Communication
 
-- **Synchronous**: REST APIs (HTTP/HTTPS)
-- **Asynchronous**: Apache Kafka for event-driven communication
+- **Synchronous**: REST via API Gateway (JWT protected)
+- **Asynchronous**: Apache Kafka (Order Placed → Notification)
 
-## 🔒 Environment Variables
+## 🔒 Authentication
 
-Each service has its own configuration in `application.yml`. For local development, you can override settings using environment variables in `docker-compose.yml`.
+1. Obtain a token:
+   ```bash
+   POST /auth/login
+   { "username": "gateway", "password": "<GATEWAY_AUTH_PASSWORD>" }
+   ```
+2. Use the token:
+   ```
+   Authorization: Bearer <accessToken>
+   ```
+
+JWT is signed with HS256 using `GATEWAY_JWT_SECRET` (must be ≥ 32 characters).
 
 ## 🐛 Debugging
 
-To debug a specific service:
-
-1. Stop the service in Docker:
+1. Stop a service in Docker:
    ```bash
-   docker-compose stop <service-name>
+   docker compose stop <service-name>
    ```
 
-2. Run the service locally with debug mode:
+2. Run it locally with debug:
    ```bash
    cd <service-directory>
-   mvn spring-boot:run -Dspring-boot.run.jvmArguments="-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+   ./mvnw spring-boot:run -Dspring-boot.run.jvmArguments="-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
    ```
 
-3. Attach your IDE's debugger to port 5005
+3. Attach your IDE debugger to port 5005.
 
 ## 🧹 Clean Up
 
-To stop and remove all containers, networks, and volumes:
-
 ```bash
-docker-compose down -v
+docker compose down -v
 ```
+
+## ☸️ Kubernetes
+
+See `ecommerce-k8s/` for base manifests.  
+**Important:** You must create the required Secrets before applying (see `ecommerce-k8s/base/secrets/README.md`).
 
 ## 🤝 Contributing
 
@@ -149,7 +188,7 @@ docker-compose down -v
 
 ## 📜 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details (if present).
 
 ## 🙏 Acknowledgments
 

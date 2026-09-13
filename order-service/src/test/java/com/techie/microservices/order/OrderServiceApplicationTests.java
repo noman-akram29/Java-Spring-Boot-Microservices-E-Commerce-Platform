@@ -13,8 +13,10 @@ import org.springframework.context.annotation.Import;
 import java.util.UUID;
 
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@AutoConfigureWireMock(port = 0)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
+        "inventory.service.url=http://localhost:8089"
+})
+@AutoConfigureWireMock(port = 8089)
 class OrderServiceApplicationTests {
 
     @LocalServerPort
@@ -48,8 +50,9 @@ class OrderServiceApplicationTests {
                 .contentType("application/json")
                 .body(submitOrderJson)
                 .when()
-                .post("/api/order")
+                .post("/")
                 .then()
+                .log().ifValidationFails()
                 .statusCode(201)
                 .body("status", Matchers.equalTo("SUCCESS"))
                 .body("orderNumber", Matchers.notNullValue());
@@ -77,18 +80,18 @@ class OrderServiceApplicationTests {
                 .header("Idempotency-Key", idempotencyKey)
                 .contentType("application/json")
                 .body(submitOrderJson)
-                .when().post("/api/order")
-                .then().statusCode(201)
+                .when().post("/")
+                .then().log().ifValidationFails()
+                .statusCode(201)
                 .extract().path("orderNumber");
 
-        // second call with the SAME key must return the SAME order, not create a new
-        // one
         RestAssured.given()
                 .header("Idempotency-Key", idempotencyKey)
                 .contentType("application/json")
                 .body(submitOrderJson)
-                .when().post("/api/order")
-                .then().statusCode(201)
+                .when().post("/")
+                .then().log().ifValidationFails()
+                .statusCode(201)
                 .body("orderNumber", Matchers.equalTo(firstOrderNumber))
                 .body("message", Matchers.containsString("replay"));
     }
@@ -114,8 +117,9 @@ class OrderServiceApplicationTests {
                 .header("Idempotency-Key", UUID.randomUUID().toString())
                 .contentType("application/json")
                 .body(submitOrderJson)
-                .when().post("/api/order")
-                .then().statusCode(201) // controller always returns 201; failure is signalled in the body
+                .when().post("/")
+                .then().log().ifValidationFails()
+                .statusCode(201)
                 .body("status", Matchers.equalTo("FAILED"))
                 .body("orderNumber", Matchers.nullValue());
     }

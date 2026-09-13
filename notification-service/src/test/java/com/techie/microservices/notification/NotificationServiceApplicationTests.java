@@ -4,7 +4,7 @@ import com.techie.microservices.notification.event.OrderPlacedEvent;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -24,7 +24,7 @@ class NotificationServiceApplicationTests {
     @Autowired
     private KafkaTemplate<String, OrderPlacedEvent> kafkaTemplate;
 
-    @MockBean
+    @MockitoBean
     private JavaMailSender javaMailSender; // real SMTP is never touched in this test
 
     @Test

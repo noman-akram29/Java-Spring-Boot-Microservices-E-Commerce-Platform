@@ -1,7 +1,19 @@
+-- MySQL initialization for e-commerce microservices
+-- Root is used ONLY for bootstrap. Applications connect as dedicated users.
+
 CREATE DATABASE IF NOT EXISTS inventory_db;
 CREATE DATABASE IF NOT EXISTS order_db;
 
--- ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'user_pass';
--- CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED WITH mysql_native_password BY 'user_pass';
--- GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
--- FLUSH PRIVILEGES;
+-- Inventory service user
+-- Needs DDL so Flyway can create flyway_schema_history + run migrations,
+-- plus DML for normal application traffic.
+CREATE USER IF NOT EXISTS 'inventory_app'@'%' IDENTIFIED BY 'InvAppSecur3Passw0rd!';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES, TRIGGER
+  ON inventory_db.* TO 'inventory_app'@'%';
+
+-- Order service user (same rationale)
+CREATE USER IF NOT EXISTS 'order_app'@'%' IDENTIFIED BY 'OrdAppSecur3Passw0rd!';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES, TRIGGER
+  ON order_db.* TO 'order_app'@'%';
+
+FLUSH PRIVILEGES;

@@ -33,7 +33,8 @@ public class OpenApiConfig {
                                                                                 .name(BEARER)
                                                                                 .type(SecurityScheme.Type.HTTP)
                                                                                 .scheme("bearer")
-                                                                                .bearerFormat("JWT")))
+                                                                                .bearerFormat("JWT")
+                                                                                .description("Get token from POST /auth/login, then paste it here")))
                                 .addSecurityItem(new SecurityRequirement().addList(BEARER));
         }
 }
