@@ -10,8 +10,12 @@ import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder;
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.security.web.server.SecurityWebFilterChain;
-import org.springframework.security.web.server.authentication.HttpBasicServerAuthenticationEntryPoint;
+
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
 
 @Configuration
 @EnableWebFluxSecurity
@@ -29,20 +33,25 @@ public class SecurityConfig {
         }
 
         @Bean
-        public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
+        public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http, ReactiveJwtDecoder jwtDecoder) {
                 return http
                                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                                 .authorizeExchange(exchanges -> exchanges
                                                 .pathMatchers(
                                                                 "/actuator/health/**",
                                                                 "/actuator/info",
-                                                                "/actuator/prometheus")
+                                                                "/actuator/prometheus",
+                                                                "/auth/login")
                                                 .permitAll()
                                                 .anyExchange().authenticated())
-                                .httpBasic(httpBasic -> httpBasic
-                                                .authenticationEntryPoint(
-                                                                new HttpBasicServerAuthenticationEntryPoint()))
+                                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtDecoder(jwtDecoder)))
                                 .build();
+        }
+
+        @Bean
+        public ReactiveJwtDecoder jwtDecoder(@Value("${gateway.jwt.secret}") String secret) {
+                SecretKeySpec key = new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+                return NimbusReactiveJwtDecoder.withSecretKey(key).build();
         }
 
         @Bean

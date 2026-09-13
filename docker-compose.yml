@@ -185,8 +185,8 @@ services:
         environment:
             SERVER_PORT: ${INVENTORY_SERVICE_PORT}
             SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:${MYSQL_PORT}/${INVENTORY_DATABASE}"
-            SPRING_DATASOURCE_USERNAME: "${MYSQL_USER}"
-            # SPRING_DATASOURCE_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+            SPRING_DATASOURCE_USERNAME: "${MYSQL_INVENTORY_USER}"
+            SPRING_DATASOURCE_PASSWORD: "${MYSQL_INVENTORY_PASSWORD}"
         secrets:
             - mysql_root_password
         expose:
@@ -223,11 +223,10 @@ services:
         environment:
             SERVER_PORT: ${ORDER_SERVICE_PORT}
             SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:${MYSQL_PORT}/${ORDER_DATABASE}"
-            SPRING_DATASOURCE_USERNAME: "${MYSQL_USER}"
-            # SPRING_DATASOURCE_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+            SPRING_DATASOURCE_USERNAME: "${MySQL_ORDER_USERNAME}"
+            SPRING_DATASOURCE_PASSWORD: "${MYSQL_ORDER_PASSWORD}"
             INVENTORY_SERVICE_URL: "http://inventory-service:${INVENTORY_SERVICE_PORT}"
             SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:${KAFKA_PORT}"
-
         secrets:
             - mysql_root_password
         expose:

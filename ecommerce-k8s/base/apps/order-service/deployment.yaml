@@ -76,11 +76,13 @@ spec:
                       - configMapRef:
                             name: order-service-config
                   env:
+                      - name: SPRING_DATASOURCE_USERNAME
+                        value: "order_app"
                       - name: SPRING_DATASOURCE_PASSWORD
                         valueFrom:
                             secretKeyRef:
                                 name: mysql-creds
-                                key: password
+                                key: order-password
                       - name: JAVA_TOOL_OPTIONS
                         value: "-javaagent:/otel/opentelemetry-javaagent.jar"
                       - name: OTEL_SERVICE_NAME

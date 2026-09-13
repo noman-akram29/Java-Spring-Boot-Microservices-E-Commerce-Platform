@@ -6,6 +6,6 @@ metadata:
 data:
     SERVER_PORT: "8083"
     SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/order_db"
-    SPRING_DATASOURCE_USERNAME: "root"
+    SPRING_DATASOURCE_USERNAME: "order_app"
     INVENTORY_SERVICE_URL: "http://inventory-service:8081"
     SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"

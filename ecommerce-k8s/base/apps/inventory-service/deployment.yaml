@@ -75,11 +75,13 @@ spec:
                       - configMapRef:
                             name: inventory-service-config
                   env:
+                      - name: SPRING_DATASOURCE_USERNAME
+                        value: "inventory_app"
                       - name: SPRING_DATASOURCE_PASSWORD
                         valueFrom:
                             secretKeyRef:
                                 name: mysql-creds
-                                key: password
+                                key: inventory-password
                       - name: JAVA_TOOL_OPTIONS
                         value: "-javaagent:/otel/opentelemetry-javaagent.jar"
                       - name: OTEL_SERVICE_NAME

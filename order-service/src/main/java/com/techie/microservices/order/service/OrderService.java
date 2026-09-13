@@ -1,26 +1,16 @@
 package com.techie.microservices.order.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.techie.microservices.order.client.InventoryClient;
 import com.techie.microservices.order.dto.OrderRequest;
 import com.techie.microservices.order.dto.OrderResponse;
-import com.techie.microservices.order.event.OrderPlacedEvent;
 import com.techie.microservices.order.external.dto.InventoryRequest;
 import com.techie.microservices.order.external.dto.InventoryResponse;
 import com.techie.microservices.order.model.IdempotencyRecord;
-import com.techie.microservices.order.model.Order;
-import com.techie.microservices.order.model.OutboxEvent;
 import com.techie.microservices.order.repository.IdempotencyRepository;
-import com.techie.microservices.order.repository.OrderRepository;
-import com.techie.microservices.order.repository.OutboxRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -30,11 +20,9 @@ import java.util.UUID;
 @Slf4j
 public class OrderService {
 
-        private final OrderRepository orderRepository;
-        private final OutboxRepository outboxRepository;
         private final IdempotencyRepository idempotencyRepository;
         private final InventoryClient inventoryClient;
-        private final ObjectMapper objectMapper;
+        private final OrderTransactionalOperations orderTransactionalOperations;
 
         public OrderResponse placeOrder(String idempotencyKey, OrderRequest orderRequest) {
 
@@ -53,7 +41,7 @@ public class OrderService {
                 // BEFORE calling any external service. This is what actually closes the race:
                 // only one concurrent caller can win this insert.
                 String orderNumber = UUID.randomUUID().toString();
-                boolean reserved = tryReserveIdempotencyKey(idempotencyKey, orderNumber);
+                boolean reserved = orderTransactionalOperations.tryReserveIdempotencyKey(idempotencyKey, orderNumber);
 
                 if (!reserved) {
                         // Someone else already reserved (or completed) this key while we were racing.
@@ -88,7 +76,7 @@ public class OrderService {
 
                 // 3. SAVE ORDER + OUTBOX. If this fails, COMPENSATE by restoring inventory.
                 try {
-                        saveOrderAndOutbox(orderNumber, orderRequest);
+                        orderTransactionalOperations.saveOrderAndOutbox(orderNumber, orderRequest);
                 } catch (Exception e) {
                         log.error("Order persistence failed after inventory was decremented for SKU {}. Compensating.",
                                         orderRequest.skuCode(), e);
@@ -100,44 +88,6 @@ public class OrderService {
 
                 log.info("Order, Outbox, and Idempotency saved: {}", orderNumber);
                 return new OrderResponse(orderNumber, "SUCCESS", "Order placed successfully");
-        }
-
-        @Transactional(propagation = Propagation.REQUIRES_NEW)
-        protected boolean tryReserveIdempotencyKey(String idempotencyKey, String orderNumber) {
-                IdempotencyRecord record = new IdempotencyRecord();
-                record.setIdempotencyKey(idempotencyKey);
-                record.setOrderNumber(orderNumber);
-                try {
-                        idempotencyRepository.save(record);
-                        return true;
-                } catch (DataIntegrityViolationException e) {
-                        return false;
-                }
-        }
-
-        @Transactional
-        protected void saveOrderAndOutbox(String orderNumber, OrderRequest orderRequest) {
-                Order order = new Order();
-                order.setOrderNumber(orderNumber);
-                order.setPrice(orderRequest.price());
-                order.setQuantity(orderRequest.quantity());
-                order.setSkuCode(orderRequest.skuCode());
-                orderRepository.save(order);
-
-                OrderPlacedEvent event = new OrderPlacedEvent(orderNumber, orderRequest.userDetails().email());
-
-                OutboxEvent outboxEvent = new OutboxEvent();
-                outboxEvent.setAggregateType("Order");
-                outboxEvent.setAggregateId(orderNumber);
-                outboxEvent.setEventType("OrderPlaced");
-
-                try {
-                        outboxEvent.setPayload(objectMapper.writeValueAsString(event));
-                } catch (JsonProcessingException e) {
-                        throw new IllegalStateException("Failed to serialize OrderPlacedEvent", e);
-                }
-
-                outboxRepository.save(outboxEvent);
         }
 
         private void compensateInventory(OrderRequest orderRequest) {
