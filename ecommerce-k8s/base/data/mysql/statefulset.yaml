@@ -50,6 +50,9 @@ spec:
                   volumeMounts:
                       - name: data
                         mountPath: /var/lib/mysql
+                      - name: init-scripts
+                        mountPath: /docker-entrypoint-initdb.d
+                        readOnly: true
                   resources:
                       requests:
                           cpu: 250m
@@ -95,3 +98,7 @@ spec:
               resources:
                   requests:
                       storage: 2Gi
+    volumes:
+        - name: init-scripts
+          configMap:
+              name: mysql-init-scripts

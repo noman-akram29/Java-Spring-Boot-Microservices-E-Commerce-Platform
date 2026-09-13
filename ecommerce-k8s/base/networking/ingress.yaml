@@ -3,8 +3,9 @@ kind: Ingress
 metadata:
     name: ecommerce-ingress
     namespace: ecommerce
-    annotations:
-        nginx.ingress.kubernetes.io/rewrite-target: /
+    # rewrite-target annotation REMOVED — api-gateway already strips /api/<service>
+    # itself (see ApiGatewayConfig.stripPrefix(2)). Rewriting here duplicated that
+    # logic incorrectly and broke every route.
 spec:
     ingressClassName: nginx
     rules:
