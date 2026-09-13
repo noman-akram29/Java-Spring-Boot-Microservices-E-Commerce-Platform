@@ -29,11 +29,19 @@ services:
         environment:
             MONGO_INITDB_ROOT_USERNAME: "${MONGO_ROOT_USERNAME}"
             MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
+            MONGO_PRODUCT_PASSWORD: "${MONGO_PRODUCT_PASSWORD}"
         expose:
             - "${MONGO_PORT}"
         volumes:
             - mongodb-data:/data/db
-            - ./mongodb:/docker-entrypoint-initdb.d:ro
+            - ./mongodb:/docker-entrypoint-initdb.d.template:ro
+            - mongodb-init-rendered:/docker-entrypoint-initdb.d
+        command: >
+            sh -c "
+            sed 's/__PRODUCT_APP_PASSWORD__/'\"$$MONGO_PRODUCT_PASSWORD\"'/' 
+                /docker-entrypoint-initdb.d.template/init-product-user.js.template > /docker-entrypoint-initdb.d/init-product-user.js &&
+            exec docker-entrypoint.sh mongod
+            "
         deploy:
             resources:
                 limits:
@@ -57,11 +65,21 @@ services:
             - mysql_root_password
         environment:
             MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+            MYSQL_INVENTORY_PASSWORD: "${MYSQL_INVENTORY_PASSWORD}"
+            MYSQL_ORDER_PASSWORD: "${MYSQL_ORDER_PASSWORD}"
         expose:
             - "${MYSQL_PORT}"
         volumes:
             - mysql-data:/var/lib/mysql
-            - ./mysql:/docker-entrypoint-initdb.d:ro
+            - ./mysql:/docker-entrypoint-initdb.d.template:ro
+            - mysql-init-rendered:/docker-entrypoint-initdb.d
+        command: >
+            sh -c "
+            sed -e 's/__INVENTORY_APP_PASSWORD__/'\"$$MYSQL_INVENTORY_PASSWORD\"'/'
+                -e 's/__ORDER_APP_PASSWORD__/'\"$$MYSQL_ORDER_PASSWORD\"'/'
+                /docker-entrypoint-initdb.d.template/init.sql.template > /docker-entrypoint-initdb.d/init.sql &&
+            exec docker-entrypoint.sh mysqld
+            "
         deploy:
             resources:
                 limits:
@@ -184,7 +202,7 @@ services:
         environment:
             SERVER_PORT: ${INVENTORY_SERVICE_PORT}
             SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:${MYSQL_PORT}/${INVENTORY_DATABASE}"
-            SPRING_DATASOURCE_USERNAME: "${MYSQL_INVENTORY_USER}"
+            SPRING_DATASOURCE_USERNAME: "${MYSQL_INVENTORY_USERNAME}"
             SPRING_DATASOURCE_PASSWORD: "${MYSQL_INVENTORY_PASSWORD}"
         expose:
             - "${INVENTORY_SERVICE_PORT}"

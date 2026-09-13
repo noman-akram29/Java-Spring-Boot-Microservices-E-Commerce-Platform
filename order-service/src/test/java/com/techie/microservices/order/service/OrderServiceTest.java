@@ -117,4 +117,25 @@ class OrderServiceTest {
                 verify(inventoryClient, never()).decreaseInventory(any());
                 verify(orderTransactionalOperations, never()).tryReserveIdempotencyKey(anyString(), anyString());
         }
+
+        @Test
+        void shouldCompensateInventoryAndReleaseKey_whenSaveOrderAndOutboxFails() {
+                when(idempotencyRepository.findByIdempotencyKey(idempotencyKey)).thenReturn(Optional.empty());
+                when(orderTransactionalOperations.tryReserveIdempotencyKey(eq(idempotencyKey), anyString()))
+                                .thenReturn(true);
+
+                InventoryResponse invResponse = new InventoryResponse(1L, "charger_x1", 10);
+                when(inventoryClient.decreaseInventory(any(InventoryRequest.class)))
+                                .thenReturn(ResponseEntity.ok(invResponse));
+
+                doThrow(new RuntimeException("DB connection lost"))
+                                .when(orderTransactionalOperations).saveOrderAndOutbox(anyString(), eq(orderRequest));
+
+                OrderResponse response = orderService.placeOrder(idempotencyKey, orderRequest);
+
+                assertThat(response.status()).isEqualTo("FAILED");
+                assertThat(response.message()).contains("restored");
+                verify(inventoryClient).increaseInventory(new InventoryRequest("charger_x1", 5));
+                verify(idempotencyRepository).deleteByIdempotencyKey(idempotencyKey);
+        }
 }

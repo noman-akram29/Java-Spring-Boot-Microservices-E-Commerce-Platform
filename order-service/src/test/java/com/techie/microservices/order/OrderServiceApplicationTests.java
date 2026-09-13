@@ -10,6 +10,12 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.cloud.contract.wiremock.AutoConfigureWireMock;
 import org.springframework.context.annotation.Import;
 
+import com.github.tomakehurst.wiremock.client.WireMock;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
 import java.util.UUID;
 
 @Import(TestcontainersConfiguration.class)
@@ -94,6 +100,53 @@ class OrderServiceApplicationTests {
                 .statusCode(201)
                 .body("orderNumber", Matchers.equalTo(firstOrderNumber))
                 .body("message", Matchers.containsString("replay"));
+    }
+
+    @Test
+    void concurrentRequestsWithSameIdempotencyKey_mustOnlyDecrementInventoryOnce() throws InterruptedException {
+        InventoryClientStub.stubDecreaseInventory("race_sku", 1);
+        String idempotencyKey = UUID.randomUUID().toString();
+
+        String submitOrderJson = """
+                {
+                    "skuCode": "race_sku",
+                    "price": 20,
+                    "quantity": 1,
+                    "userDetails": {
+                        "email": "test@example.com",
+                        "firstName": "Test",
+                        "lastName": "User"
+                    }
+                }
+                """;
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch startLine = new CountDownLatch(1);
+        CountDownLatch finishLine = new CountDownLatch(2);
+
+        Runnable placeOrder = () -> {
+            try {
+                startLine.await();
+                RestAssured.given()
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType("application/json")
+                        .body(submitOrderJson)
+                        .when().post("/");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                finishLine.countDown();
+            }
+        };
+
+        pool.submit(placeOrder);
+        pool.submit(placeOrder);
+        startLine.countDown();
+        finishLine.await(10, TimeUnit.SECONDS);
+        pool.shutdown();
+
+        WireMock.verify(1, WireMock.postRequestedFor(WireMock.urlEqualTo("/decrease"))
+                .withRequestBody(WireMock.matchingJsonPath("$.skuCode", WireMock.equalTo("race_sku"))));
     }
 
     @Test

@@ -138,7 +138,22 @@ Or run them all via the Azure pipeline / CI.
 - **Synchronous**: REST via API Gateway (JWT protected)
 - **Asynchronous**: Apache Kafka (Order Placed → Notification)
 
+## 🔐 Database Security (Non-Root Users)
+
+Applications **never** connect as database root/admin.
+
+| Database | Application user   | Privileges                                      |
+|----------|--------------------|-------------------------------------------------|
+| MySQL    | `inventory_app`    | SELECT, INSERT, UPDATE, DELETE on `inventory_db` |
+| MySQL    | `order_app`        | SELECT, INSERT, UPDATE, DELETE on `order_db`     |
+| MongoDB  | `product_app`      | readWrite on `product_db`                        |
+
+Root credentials are used only for container/StatefulSet bootstrap.  
+See `docs/local-secrets-setup.md` and `ecommerce-k8s/base/secrets/README.md`.
+
 ## 🔒 Authentication
+
+1. Obtain a token:
 
 1. Obtain a token:
    ```bash
