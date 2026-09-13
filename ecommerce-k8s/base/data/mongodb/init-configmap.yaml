@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+    name: mongo-init-scripts
+    namespace: ecommerce
+data:
+    init-mongo.js: |
+        db = db.getSiblingDB('product_db');
+        db.createUser({
+          user: "product_app",
+          pwd: "ProdAppSecur3Passw0rd!",
+          roles: [
+            {
+              role: "readWrite",
+              db: "product_db"
+            }
+          ]
+        });
