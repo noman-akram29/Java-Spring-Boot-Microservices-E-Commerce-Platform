@@ -12,8 +12,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -26,23 +29,21 @@ public class ProductService {
 	public ProductResponse createProduct(ProductRequest productRequest) {
 
 		Product product = Product.builder()
-		                  .skuCode(productRequest.skuCode())
-		                  .name(productRequest.name())
-		                  .description(productRequest.description())
-		                  .price(productRequest.price())
-		                  .build();
+				.skuCode(productRequest.skuCode())
+				.name(productRequest.name())
+				.description(productRequest.description())
+				.price(productRequest.price())
+				.build();
 
 		productRepository.save(product);
 
 		log.info("Product saved successfully: {}", product.getSkuCode());
 
-		InventoryResponse inventoryResponse =
-		    inventoryClient.upsertInventory(
-		        new InventoryRequest(
-		            productRequest.skuCode(),
-		            productRequest.quantity()
-		        )
-		    ).getBody();
+		InventoryResponse inventoryResponse = inventoryClient.upsertInventory(
+				new InventoryRequest(
+						productRequest.skuCode(),
+						productRequest.quantity()))
+				.getBody();
 
 		if (inventoryResponse == null) {
 			log.error("Inventory service returned null response for SKU: {}", productRequest.skuCode());
@@ -52,43 +53,43 @@ public class ProductService {
 		log.info("Inventory updated for SKU: {}", productRequest.skuCode());
 
 		return new ProductResponse(
-		           product.getId(),
-		           product.getName(),
-		           product.getDescription(),
-		           product.getPrice(),
-		           inventoryResponse.quantity()
-		       );
+				product.getId(),
+				product.getName(),
+				product.getDescription(),
+				product.getPrice(),
+				inventoryResponse.quantity());
 	}
 
+	@Transactional(readOnly = true)
 	public List<ProductResponse> getAllProducts() {
 
 		List<Product> products = productRepository.findAll();
+		List<String> skuCodes = products.stream().map(Product::getSkuCode).toList();
+
+		Map<String, Integer> quantityBySku;
+
+		try {
+			List<InventoryResponse> responses = inventoryClient.getInventoryBySkuCodes(skuCodes).getBody();
+			if (responses != null) {
+				quantityBySku = responses.stream()
+						.collect(Collectors.toMap(InventoryResponse::skuCode, InventoryResponse::quantity));
+			} else {
+				quantityBySku = Map.of();
+			}
+		} catch (Exception ex) {
+			log.error("Failed to fetch inventory batch for {} SKUs", skuCodes.size(), ex);
+			quantityBySku = Map.of();
+		}
+
+		Map<String, Integer> finalMap = quantityBySku;
 
 		return products.stream()
-		.map(product -> {
-
-			InventoryResponse inventoryResponse = null;
-
-			try {
-				inventoryResponse = inventoryClient
-				.getInventoryBySkuCode(product.getSkuCode())
-				.getBody();
-			} catch (Exception ex) {
-				log.error("Failed to fetch inventory for SKU: {}", product.getSkuCode(), ex);
-			}
-
-			Integer quantity = (inventoryResponse != null)
-			? inventoryResponse.quantity()
-			: 0;
-
-			return new ProductResponse(
-			    product.getId(),
-			    product.getName(),
-			    product.getDescription(),
-			    product.getPrice(),
-			    quantity
-			);
-		})
-		.toList();
+				.map(product -> new ProductResponse(
+						product.getId(),
+						product.getName(),
+						product.getDescription(),
+						product.getPrice(),
+						finalMap.getOrDefault(product.getSkuCode(), 0)))
+				.toList();
 	}
 }

@@ -8,7 +8,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.12</version>
+        <version>3.5.16</version>
         <relativePath/>
     </parent>
 
@@ -21,6 +21,9 @@
 
     <properties>
         <java.version>21</java.version>
+        <spring-cloud.version>2025.0.3</spring-cloud.version>
+        <netty.version>4.1.137.Final</netty.version>
+        <tomcat.version>10.1.59</tomcat.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <lombok.version>1.18.38</lombok.version>
     </properties>
@@ -87,9 +90,15 @@
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>2.5.0</version>
+            <version>2.8.13</version>
         </dependency>
 
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <version>5.3.2</version>
+            <scope>test</scope>
+        </dependency>
 
         <!-- Tests -->
         <dependency>

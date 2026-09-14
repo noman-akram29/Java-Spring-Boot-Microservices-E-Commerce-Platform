@@ -27,22 +27,23 @@ public class NotificationService {
 			helper.setTo(orderPlacedEvent.getEmail());
 			helper.setSubject("Spring Shop: Order Confirmation");
 			helper.setText("""
-			               Hi,
+						Hi,
 
-			               Thank you for your order.
-			               Your order number is %s.
+						Thank you for your order.
+						Your order number is %s.
 
-			               Best regards,
-			               Spring Shop Team
-			               """.formatted(orderPlacedEvent.getOrderNumber()));
+						Best regards,
+						Spring Shop Team
+						""".formatted(orderPlacedEvent.getOrderNumber()));
 		};
 
-	try {
-		javaMailSender.send(messagePreparator);
-			log.info("Order confirmation email sent!");
+		try {
+			javaMailSender.send(messagePreparator);
+			log.info("Order confirmation email sent for order: {}", orderPlacedEvent.getOrderNumber());
 		} catch (Exception e) {
-			log.error("Email sending failed: {}", e.getMessage(), e);
-			throw new RuntimeException("Email sending failed, ignoring for now", e);
+			// Do NOT re-throw – notification failure must not poison the consumer
+			log.error("Email sending failed for order {}: {}. Message will be skipped.",
+					orderPlacedEvent.getOrderNumber(), e.getMessage(), e);
 		}
 	}
 }

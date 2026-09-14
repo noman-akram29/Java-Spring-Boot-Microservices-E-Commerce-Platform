@@ -52,6 +52,9 @@ spec:
                   volumeMounts:
                       - name: data
                         mountPath: /data/db
+                      - name: init-scripts
+                        mountPath: /docker-entrypoint-initdb.d
+                        readOnly: true
                   resources:
                       requests:
                           cpu: 250m
@@ -76,6 +79,10 @@ spec:
                       initialDelaySeconds: 40
                       periodSeconds: 20
                       failureThreshold: 6
+            volumes:
+                - name: init-scripts
+                  configMap:
+                      name: mongo-init-scripts
     volumeClaimTemplates:
         - metadata:
               name: data

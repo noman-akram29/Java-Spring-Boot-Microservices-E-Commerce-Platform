@@ -14,58 +14,58 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-@Tag(
-    name = "Inventory API",
-    description = "Manage inventory operations"
-)
+import java.util.List;
+
+@Tag(name = "Inventory API", description = "Manage inventory operations")
 @RestController
 @RequiredArgsConstructor
 public class InventoryController {
 
-	private final InventoryService inventoryService;
+    private final InventoryService inventoryService;
 
-	@Operation(summary = "Check product stock availability")
+    @Operation(summary = "Check product stock availability")
     @GetMapping
     public boolean isInStock(
-        @RequestParam String skuCode,
-        @RequestParam Integer quantity
-    ) {
+            @RequestParam String skuCode,
+            @RequestParam Integer quantity) {
         return inventoryService.isInStock(skuCode, quantity);
     }
 
-	@Operation(summary = "Check the health of the inventory service")
+    @Operation(summary = "Check the health of the inventory service")
     @GetMapping("/health")
     public String health() {
         return "UP";
     }
 
- 	@Operation(summary = "Create or update inventory")
+    @Operation(summary = "Create or update inventory")
     @PostMapping
     public ResponseEntity<InventoryResponse> upsertInventory(
-        @Valid @RequestBody InventoryRequest request
-    ) {
+            @Valid @RequestBody InventoryRequest request) {
         return ResponseEntity.ok(
-            inventoryService.upsertInventory(request)
-        );
+                inventoryService.upsertInventory(request));
     }
 
-	@Operation(summary = "Get inventory by SKU code")
+    @Operation(summary = "Get inventory by SKU code")
     @GetMapping("/{skuCode}")
     public ResponseEntity<InventoryResponse> getInventoryBySkuCode(
-        @PathVariable String skuCode
-    ) {
+            @PathVariable String skuCode) {
         return ResponseEntity.ok(
-            inventoryService.getInventoryBySkuCode(skuCode)
-        );
+                inventoryService.getInventoryBySkuCode(skuCode));
     }
 
-	@Operation(summary = "Decrease inventory")
+    @Operation(summary = "Get inventory for multiple SKUs")
+    @PostMapping("/batch")
+    public ResponseEntity<List<InventoryResponse>> getInventoryBySkuCodes(
+            @RequestBody List<String> skuCodes) {
+        return ResponseEntity.ok(
+                inventoryService.getInventoryBySkuCodes(skuCodes));
+    }
+
+    @Operation(summary = "Decrease inventory")
     @PostMapping("/decrease")
     public ResponseEntity<InventoryResponse> decreaseInventory(
-        @Valid @RequestBody InventoryRequest request
-    ) {
+            @Valid @RequestBody InventoryRequest request) {
         return ResponseEntity.ok(
-            inventoryService.decreaseInventory(request)
-        );
+                inventoryService.decreaseInventory(request));
     }
 }

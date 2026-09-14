@@ -6,4 +6,4 @@ metadata:
 data:
     SERVER_PORT: "8081"
     SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/inventory_db"
-    SPRING_DATASOURCE_USERNAME: "root"
+    SPRING_DATASOURCE_USERNAME: "inventory_app"

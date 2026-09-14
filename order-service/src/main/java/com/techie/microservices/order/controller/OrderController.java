@@ -21,9 +21,9 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class OrderController {
 
-	private final OrderService orderService;
+    private final OrderService orderService;
 
-	@Operation(summary = "Check if the order service is running")
+    @Operation(summary = "Check if the order service is running")
     @GetMapping("/")
     public String home() {
         return "Order Service is running...";
@@ -39,8 +39,9 @@ public class OrderController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public OrderResponse placeOrder(
-		@Valid @RequestBody OrderRequest orderRequest
-	) {
-        return orderService.placeOrder(orderRequest);
+        @RequestHeader(value = "Idempotency-Key", required = true) String idempotencyKey,
+        @Valid @RequestBody OrderRequest orderRequest
+    ) {
+        return orderService.placeOrder(idempotencyKey, orderRequest);
     }
 }

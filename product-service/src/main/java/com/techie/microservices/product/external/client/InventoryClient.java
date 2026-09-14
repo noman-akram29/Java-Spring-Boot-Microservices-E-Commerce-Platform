@@ -7,19 +7,20 @@ import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-@FeignClient(
-    name = "inventory-service",
-    url = "${inventory.service.url}"
-)
+import java.util.List;
+
+@FeignClient(name = "inventory-service", url = "${inventory.service.url}")
 public interface InventoryClient {
 
 	@PostMapping
 	ResponseEntity<InventoryResponse> upsertInventory(
-		@RequestBody InventoryRequest inventoryRequest
-	);
+			@RequestBody InventoryRequest inventoryRequest);
 
 	@GetMapping("/{skuCode}")
 	ResponseEntity<InventoryResponse> getInventoryBySkuCode(
-		@PathVariable String skuCode
-	);
+			@PathVariable String skuCode);
+
+	@PostMapping("/batch")
+	ResponseEntity<List<InventoryResponse>> getInventoryBySkuCodes(
+			@RequestBody List<String> skuCodes);
 }

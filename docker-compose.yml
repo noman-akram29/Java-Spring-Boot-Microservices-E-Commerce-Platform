@@ -29,10 +29,15 @@ services:
         environment:
             MONGO_INITDB_ROOT_USERNAME: "${MONGO_ROOT_USERNAME}"
             MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
+            MONGO_PRODUCT_PASSWORD: "${MONGO_PRODUCT_PASSWORD}"
         expose:
             - "${MONGO_PORT}"
         volumes:
             - mongodb-data:/data/db
+            - ./mongodb:/docker-entrypoint-initdb.d.template:ro
+            - mongodb-init-rendered:/docker-entrypoint-initdb.d
+        command: >
+            sh -c "sed 's/__PRODUCT_APP_PASSWORD__/'\"$$MONGO_PRODUCT_PASSWORD\"'/' /docker-entrypoint-initdb.d.template/init-product-user.js.template > /docker-entrypoint-initdb.d/init-product-user.js && exec docker-entrypoint.sh mongod"
         deploy:
             resources:
                 limits:
@@ -56,11 +61,16 @@ services:
             - mysql_root_password
         environment:
             MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+            MYSQL_INVENTORY_PASSWORD: "${MYSQL_INVENTORY_PASSWORD}"
+            MYSQL_ORDER_PASSWORD: "${MYSQL_ORDER_PASSWORD}"
         expose:
             - "${MYSQL_PORT}"
         volumes:
             - mysql-data:/var/lib/mysql
-            - ./mysql:/docker-entrypoint-initdb.d:ro
+            - ./mysql:/docker-entrypoint-initdb.d.template:ro
+            - mysql-init-rendered:/docker-entrypoint-initdb.d
+        command: >
+            sh -c "sed 's/__INVENTORY_APP_PASSWORD__/'\"$$MYSQL_INVENTORY_PASSWORD\"'/g; s/__ORDER_APP_PASSWORD__/'\"$$MYSQL_ORDER_PASSWORD\"'/g' /docker-entrypoint-initdb.d.template/init.sql.template > /docker-entrypoint-initdb.d/init.sql && exec docker-entrypoint.sh mysqld"
         deploy:
             resources:
                 limits:
@@ -75,9 +85,9 @@ services:
         image: apache/kafka:3.9.0
 
         environment:
-            KAFKA_NODE_ID: 1
-            KAFKA_PROCESS_ROLES: "broker,controller"
-            KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+            KAFKA_NODE_ID: "${KAFKA_NODE_ID}"
+            KAFKA_PROCESS_ROLES: "${KAFKA_PROCESS_ROLES}"
+            KAFKA_CONTROLLER_QUORUM_VOTERS: "${KAFKA_CONTROLLER_QUORUM_VOTERS}"
             KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
             KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:${KAFKA_PORT}"
             KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
@@ -86,7 +96,7 @@ services:
             KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
             KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
             KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-            CLUSTER_ID: "5L6g3nShT-eMCtK--X86sw"
+            CLUSTER_ID: "${KAFKA_CLUSTER_ID}"
 
         expose:
             - "${KAFKA_PORT}"
@@ -149,15 +159,19 @@ services:
         environment:
             SERVER_PORT: ${PRODUCT_SERVICE_PORT}
             SPRING_DATA_MONGODB_URI: >-
-                mongodb://${MONGO_ROOT_USERNAME}:__MONGO_PASSWORD__@mongodb:27017/product-service?authSource=admin
+                mongodb://${MONGO_PRODUCT_USER}:${MONGO_PRODUCT_PASSWORD}@mongodb:${MONGO_PORT}/${PRODUCT_DATABASE}?authSource=admin
             INVENTORY_SERVICE_URL: "http://inventory-service:${INVENTORY_SERVICE_PORT}"
-        secrets:
-            - mongo_root_password
         expose:
             - "${PRODUCT_SERVICE_PORT}"
         healthcheck:
             <<: *default-healthcheck
-            test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+            test:
+                [
+                    "CMD",
+                    "curl",
+                    "-f",
+                    "http://localhost:${PRODUCT_SERVICE_PORT}/actuator/health",
+                ]
         deploy:
             resources:
                 limits:
@@ -178,16 +192,20 @@ services:
                 condition: service_healthy
         environment:
             SERVER_PORT: ${INVENTORY_SERVICE_PORT}
-            SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/${INVENTORY_DATABASE}"
-            SPRING_DATASOURCE_USERNAME: root
-            # SPRING_DATASOURCE_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
-        secrets:
-            - mysql_root_password
+            SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:${MYSQL_PORT}/${INVENTORY_DATABASE}"
+            SPRING_DATASOURCE_USERNAME: "${MYSQL_INVENTORY_USERNAME}"
+            SPRING_DATASOURCE_PASSWORD: "${MYSQL_INVENTORY_PASSWORD}"
         expose:
             - "${INVENTORY_SERVICE_PORT}"
         healthcheck:
             <<: *default-healthcheck
-            test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+            test:
+                [
+                    "CMD",
+                    "curl",
+                    "-f",
+                    "http://localhost:${INVENTORY_SERVICE_PORT}/actuator/health",
+                ]
         deploy:
             resources:
                 limits:
@@ -210,19 +228,22 @@ services:
                 condition: service_healthy
         environment:
             SERVER_PORT: ${ORDER_SERVICE_PORT}
-            SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/${ORDER_DATABASE}"
-            SPRING_DATASOURCE_USERNAME: root
-            # SPRING_DATASOURCE_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+            SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:${MYSQL_PORT}/${ORDER_DATABASE}"
+            SPRING_DATASOURCE_USERNAME: "${MYSQL_ORDER_USERNAME}"
+            SPRING_DATASOURCE_PASSWORD: "${MYSQL_ORDER_PASSWORD}"
             INVENTORY_SERVICE_URL: "http://inventory-service:${INVENTORY_SERVICE_PORT}"
             SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:${KAFKA_PORT}"
-
-        secrets:
-            - mysql_root_password
         expose:
             - "${ORDER_SERVICE_PORT}"
         healthcheck:
             <<: *default-healthcheck
-            test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
+            test:
+                [
+                    "CMD",
+                    "curl",
+                    "-f",
+                    "http://localhost:${ORDER_SERVICE_PORT}/actuator/health",
+                ]
         deploy:
             resources:
                 limits:
@@ -245,12 +266,18 @@ services:
                 condition: service_healthy
         healthcheck:
             <<: *default-healthcheck
-            test: ["CMD", "curl", "-f", "http://localhost:8084/actuator/health"]
+            test:
+                [
+                    "CMD",
+                    "curl",
+                    "-f",
+                    "http://localhost:${NOTIFICATION_SERVICE_PORT}/actuator/health",
+                ]
         environment:
             SERVER_PORT: ${NOTIFICATION_SERVICE_PORT}
             SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:${KAFKA_PORT}"
             SPRING_MAIL_HOST: mailpit
-            SPRING_MAIL_PORT: 1025
+            SPRING_MAIL_PORT: ${MAILPIT_SMTP_PORT}
         deploy:
             resources:
                 limits:
@@ -281,6 +308,9 @@ services:
             INVENTORY_SERVICE_URL: "http://inventory-service:${INVENTORY_SERVICE_PORT}"
             PRODUCT_SERVICE_URL: "http://product-service:${PRODUCT_SERVICE_PORT}"
             ORDER_SERVICE_URL: "http://order-service:${ORDER_SERVICE_PORT}"
+            GATEWAY_AUTH_USERNAME: ${GATEWAY_AUTH_USERNAME:-gateway}
+            GATEWAY_AUTH_PASSWORD: ${GATEWAY_AUTH_PASSWORD}
+            GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET}
         ports:
             - "${API_GATEWAY_PORT}:8080"
         deploy:
@@ -296,6 +326,8 @@ volumes:
     mongodb-data:
     mysql-data:
     kafka-data:
+    mysql-init-rendered:
+    mongodb-init-rendered:
 
 networks:
     ecommerce-network:
