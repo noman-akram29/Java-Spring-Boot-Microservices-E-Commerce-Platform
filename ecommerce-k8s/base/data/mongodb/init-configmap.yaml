@@ -5,14 +5,14 @@ metadata:
     namespace: ecommerce
 data:
     init-mongo.js: |
-        db = db.getSiblingDB('product_db');
+        db = db.getSiblingDB("admin");
         db.createUser({
           user: "product_app",
           pwd: "ProdAppSecur3Passw0rd!",
           roles: [
-            {
+            { 
               role: "readWrite",
-              db: "product_db"
+              db: "product_db" 
             }
           ]
         });
