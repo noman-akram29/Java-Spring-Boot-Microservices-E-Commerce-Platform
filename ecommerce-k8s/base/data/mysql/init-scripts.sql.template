@@ -14,11 +14,11 @@ data:
         CREATE DATABASE IF NOT EXISTS inventory_db;
         CREATE DATABASE IF NOT EXISTS order_db;
 
-        CREATE USER IF NOT EXISTS 'inventory_app'@'%' IDENTIFIED BY 'InvAppSecur3Passw0rd!';
+        CREATE USER IF NOT EXISTS 'inventory_app'@'%' IDENTIFIED BY '__INVENTORY_APP_PASSWORD__';
         GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES, TRIGGER
           ON inventory_db.* TO 'inventory_app'@'%';
 
-        CREATE USER IF NOT EXISTS 'order_app'@'%' IDENTIFIED BY 'OrdAppSecur3Passw0rd!';
+        CREATE USER IF NOT EXISTS 'order_app'@'%' IDENTIFIED BY '__ORDER_APP_PASSWORD__';
         GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES, TRIGGER
           ON order_db.* TO 'order_app'@'%';
 

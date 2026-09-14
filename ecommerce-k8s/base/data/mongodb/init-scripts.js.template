@@ -8,7 +8,7 @@ data:
         db = db.getSiblingDB("admin");
         db.createUser({
           user: "product_app",
-          pwd: "ProdAppSecur3Passw0rd!",
+          pwd: "__PRODUCT_APP_PASSWORD__",
           roles: [
             { 
               role: "readWrite",
