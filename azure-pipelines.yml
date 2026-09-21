@@ -9,20 +9,15 @@ trigger:
             - main
 
 variables:
-    AWS_REGION: ap-south-1
-    ECR_REGISTRY: 561531407742.dkr.ecr.ap-south-1.amazonaws.com
-    IMAGE_TAG: $(Build.BuildId)
-    SERVICES: api-gateway product-service inventory-service order-service notification-service
-    NAMESPACE: ecommerce
-    # Pin scanner versions deliberately. `latest` lets a third party change the
-    # verdict of your build overnight. Bump these on purpose, not by accident.
-    TRIVY_VERSION: 0.58.2
-    SYFT_VERSION: v1.19.0
+    - group: ecommerce-common
+    - group: ecommerce-staging
+    - name: IMAGE_TAG
+      value: $(Build.BuildId)
 
 pool:
-    name: e-commerce-pool
+    name: $(AGENT_POOL)
     demands:
-        - Agent.Name -equals azuredevops-deployer
+        - Agent.Name -equals $(AGENT_NAME)
 
 stages:
     # ------------------------------------------------
@@ -170,7 +165,7 @@ stages:
     - stage: Deploy
       displayName: Deploy to Kubernetes
       dependsOn: Build
-      condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/staging'))
+      condition: and(succeeded(), eq(variables['Build.SourceBranch'], variables['DEPLOY_BRANCH']))
       jobs:
           - job: DeployApps
             displayName: Deploy applications
