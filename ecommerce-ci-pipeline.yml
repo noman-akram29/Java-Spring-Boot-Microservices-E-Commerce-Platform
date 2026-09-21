@@ -1,5 +1,5 @@
-# azure-pipelines.yml
-# Production CI/CD - Step 1 Hardening with Trivy Vulnerability Scanning & Syft SBOM
+# ecommerce-ci-pipeline.yml
+# Production CI – Build, Unit Test, Trivy (vuln+secret+misconfig), Syft SBOM, Push to ECR
 
 trigger:
     branches:
@@ -70,6 +70,7 @@ stages:
                           SERVICES="$(SERVICES)"
                           REPORT_DIR="$(Build.ArtifactStagingDirectory)/security"
                           TRIVY_CACHE="${HOME}/.cache/trivy"
+                          SRC_DIR="$(Build.SourcesDirectory)"
 
                           # Write reports straight to the staging dir. No copy step,
                           # so a failure here fails the build instead of silently
@@ -95,28 +96,35 @@ stages:
                               --file "${SERVICE}/Dockerfile" \
                               "${SERVICE}"
 
-                            # Pass 1: report only, never fails. Gives you something to
-                            # triage when pass 2 kills the build.
-                            echo "=== Trivy report (all severities) ==="
+                            # Pass 1: full report (vuln + secret + misconfig) – never fails the build.
+                            # Gives you something to triage when pass 2 kills the build.
+                            echo "=== Trivy full report (vuln + secret + misconfig) ==="
                             docker run --rm \
                               -v /var/run/docker.sock:/var/run/docker.sock \
                               -v "${TRIVY_CACHE}:/root/.cache/trivy" \
                               -v "${REPORT_DIR}:/out" \
+                              -v "${SRC_DIR}:/src:ro" \
                               aquasec/trivy:$(TRIVY_VERSION) image \
+                                --scanners vuln,secret,misconfig \
                                 --format json \
                                 --output "/out/${SERVICE}-${TAG}-trivy.json" \
+                                --ignorefile /src/.trivyignore \
                                 --no-progress \
-                                "${IMAGE}"
+                                "${IMAGE}" || true
 
                             # Pass 2: the gate. Hits the warm DB cache, so it is fast.
+                            # Fails the build on CRITICAL or HIGH findings.
                             echo "=== Trivy vulnerability gate (CRITICAL,HIGH) ==="
                             docker run --rm \
                               -v /var/run/docker.sock:/var/run/docker.sock \
                               -v "${TRIVY_CACHE}:/root/.cache/trivy" \
+                              -v "${SRC_DIR}:/src:ro" \
                               aquasec/trivy:$(TRIVY_VERSION) image \
+                                --scanners vuln,secret,misconfig \
                                 --exit-code 1 \
                                 --severity CRITICAL,HIGH \
                                 --ignore-unfixed \
+                                --ignorefile /src/.trivyignore \
                                 --no-progress \
                                 "${IMAGE}"
                             echo "The ${SERVICE} passed Trivy scan 🎉"
@@ -138,6 +146,31 @@ stages:
 
                           echo ""
                           echo "All images passed vulnerability gates, generated SBOMs, and pushed successfully!"
+
+                # Convert Trivy JSON reports to SARIF so they appear in the Security tab
+                - script: |
+                      set -euo pipefail
+                      REPORT_DIR="$(Build.ArtifactStagingDirectory)/security"
+                      TAG="$(IMAGE_TAG)"
+                      SERVICES="$(SERVICES)"
+
+                      echo "=== Converting Trivy JSON → SARIF ==="
+                      for SERVICE in $SERVICES; do
+                        JSON_FILE="${REPORT_DIR}/${SERVICE}-${TAG}-trivy.json"
+                        if [ -f "${JSON_FILE}" ]; then
+                          docker run --rm \
+                            -v "${REPORT_DIR}:/out" \
+                            aquasec/trivy:$(TRIVY_VERSION) convert \
+                              --format sarif \
+                              --output "/out/${SERVICE}-${TAG}-trivy.sarif" \
+                              "/out/${SERVICE}-${TAG}-trivy.json"
+                          echo "Created ${SERVICE}-${TAG}-trivy.sarif"
+                        else
+                          echo "WARNING: ${JSON_FILE} not found – skipping SARIF conversion"
+                        fi
+                      done
+                  displayName: "Convert Trivy reports to SARIF"
+                  condition: succeededOrFailed()
 
                 - task: PublishPipelineArtifact@1
                   displayName: "Publish SBOMs & vulnerability reports"
