@@ -1,20 +1,21 @@
-# ------------------------------------------------
-# STAGE 2: Deploy (staging only)
-# ------------------------------------------------
-# NOTE: `trigger` includes main, but this condition matches staging only, so a
-# push to main builds + pushes to ECR and stops. If you want main to deploy too:
-#   condition: and(succeeded(), in(variables['Build.SourceBranch'],
-#                  'refs/heads/staging', 'refs/heads/main'))
-
-# cd.yml
+# ecommerce-cd-pipeline.yml
 # Deployment pipeline – triggered only after CI succeeds
+#
+# What this pipeline does:
+# 1. Triggered automatically when the CI pipeline succeeds on staging or main
+# 2. Selects the correct variable group (staging vs prod) based on the branch
+# 3. Uses an Azure DevOps Environment so you get deployment history + optional approvals
+# 4. Verifies the images exist in ECR
+# 5. Updates the Kubernetes deployments
+# 6. Waits for rollout + performs extra health checks
+# 7. Dumps diagnostics if anything fails
 
-trigger: none # never runs on git push
+trigger: none # never runs on git push – only triggered by the CI pipeline
 
 resources:
     pipelines:
-        - pipeline: ci # alias
-          source: "ecommerce-ci-pipeline" # ← exact name of the CI pipeline in Azure DevOps
+        - pipeline: ci # alias used later as resources.pipeline.ci
+          source: "ecommerce-ci-pipeline" # ← must match the exact name of your CI pipeline
           trigger:
               branches:
                   include:
@@ -23,15 +24,21 @@ resources:
 
 variables:
     - group: ecommerce-common
-    # Runtime selection of environment group based on the branch that triggered the CI run.
-    # resources.pipeline.ci.sourceBranch is reliable for pipeline-resource triggers.
+
+    # Select environment-specific variables based on the branch that triggered CI.
+    # Build.SourceBranch is set to the branch of the triggering CI run.
     - ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/staging') }}:
           - group: ecommerce-staging
     - ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
           - group: ecommerce-prod
 
+    # IMAGE_TAG comes from the CI run that triggered us (same Build.BuildId)
     - name: IMAGE_TAG
-      value: $(resources.pipeline.ci.runID) # uses the BuildId from the triggering CI run
+      value: $(resources.pipeline.ci.runID)
+
+    # Helper variable so we can use it in the environment name
+    - name: TARGET_ENV
+      value: $[replace(variables['Build.SourceBranch'], 'refs/heads/', '')]
 
 pool:
     name: $(AGENT_POOL)
@@ -41,112 +48,142 @@ pool:
 stages:
     - stage: Deploy
       displayName: Deploy to Kubernetes
-      # No dependsOn – this pipeline has only one stage
       condition: succeeded()
       jobs:
-          - job: DeployApps
+          # ------------------------------------------------
+          # This is now a DEPLOYMENT job (not a normal job).
+          # It records the deployment against an Azure Environment.
+          # ------------------------------------------------
+          - deployment: DeployApps
             displayName: Deploy applications
-            steps:
-                # Nothing in this job reads a repo file.
-                - checkout: none
+            # The environment name becomes ecommerce-staging or ecommerce-prod
+            # You can add Approvals / Checks on these environments in the UI.
+            environment: ecommerce-$(TARGET_ENV)
+            strategy:
+                runOnce:
+                    deploy:
+                        steps:
+                            # Nothing in this job reads a repo file.
+                            - checkout: none
 
-                # 2.1 Verify all images exist in ECR (fail fast).
-                # Redundant on a fresh run - Stage 1 just pushed them. Earns its keep
-                # when you re-run this stage later against a lifecycle-pruned tag.
-                - task: AWSShellScript@1
-                  displayName: "Verify all images exist in ECR"
-                  inputs:
-                      awsCredentials: "AWS-ECR-OIDC"
-                      regionName: $(AWS_REGION)
-                      scriptType: "inline"
-                      inlineScript: |
-                          set -euo pipefail
+                            # ------------------------------------------------
+                            # 2.1 Verify all images exist in ECR (fail fast).
+                            # Redundant on a fresh run - CI just pushed them.
+                            # Earns its keep when you re-run this stage later
+                            # against a lifecycle-pruned tag.
+                            # ------------------------------------------------
+                            - task: AWSShellScript@1
+                              displayName: "Verify all images exist in ECR"
+                              inputs:
+                                  awsCredentials: "AWS-ECR-OIDC"
+                                  regionName: $(AWS_REGION)
+                                  scriptType: "inline"
+                                  inlineScript: |
+                                      set -euo pipefail
 
-                          TAG="$(IMAGE_TAG)"
-                          SERVICES="$(SERVICES)"
+                                      TAG="$(IMAGE_TAG)"
+                                      SERVICES="$(SERVICES)"
 
-                          echo "=== Verifying images exist in ECR for tag: ${TAG} ==="
-                          for SERVICE in $SERVICES; do
-                            echo "Checking ecommerce/${SERVICE}:${TAG} ..."
-                            aws ecr describe-images \
-                              --repository-name "ecommerce/${SERVICE}" \
-                              --image-ids imageTag="${TAG}" \
-                              --region $(AWS_REGION) \
-                              --query 'imageDetails[0].imageTags' \
-                              --output text > /dev/null
-                            echo "✓ ${SERVICE}:${TAG} exists"
-                          done
+                                      echo "=== Verifying images exist in ECR for tag: ${TAG} ==="
+                                      for SERVICE in $SERVICES; do
+                                        echo "Checking ecommerce/${SERVICE}:${TAG} ..."
+                                        aws ecr describe-images \
+                                          --repository-name "ecommerce/${SERVICE}" \
+                                          --image-ids imageTag="${TAG}" \
+                                          --region $(AWS_REGION) \
+                                          --query 'imageDetails[0].imageTags' \
+                                          --output text > /dev/null
+                                        echo "✓ ${SERVICE}:${TAG} exists"
+                                      done
 
-                          echo ""
-                          echo "All images verified successfully."
+                                      echo ""
+                                      echo "All images verified successfully."
 
-                # 2.2 Deploy. Single pass: set image -> wait for rollout -> verify,
-                # instead of two separate loops over the same service list.
-                - script: |
-                      set -euo pipefail
+                            # ------------------------------------------------
+                            # 2.2 Deploy + wait for rollout + extra health checks
+                            # ------------------------------------------------
+                            - script: |
+                                  set -euo pipefail
 
-                      REGISTRY="$(ECR_REGISTRY)"
-                      TAG="$(IMAGE_TAG)"
-                      NS="$(NAMESPACE)"
-                      SERVICES="$(SERVICES)"
+                                  REGISTRY="$(ECR_REGISTRY)"
+                                  TAG="$(IMAGE_TAG)"
+                                  NS="$(NAMESPACE)"
+                                  SERVICES="$(SERVICES)"
 
-                      echo "=== Deployer identity ==="
-                      kubectl config current-context
-                      kubectl auth can-i patch deployments -n "$NS"
+                                  echo "=== Deployer identity ==="
+                                  kubectl config current-context
+                                  kubectl auth can-i patch deployments -n "$NS"
 
-                      for SERVICE in $SERVICES; do
-                        IMAGE="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
+                                  for SERVICE in $SERVICES; do
+                                    IMAGE="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
 
-                        echo "------------------------------------------------"
-                        echo "Updating ${SERVICE} -> ${IMAGE}"
+                                    echo "------------------------------------------------"
+                                    echo "Updating ${SERVICE} -> ${IMAGE}"
 
-                        kubectl set image "deployment/${SERVICE}" \
-                          "${SERVICE}=${IMAGE}" \
-                          -n "$NS"
+                                    # Update the deployment image
+                                    kubectl set image "deployment/${SERVICE}" \
+                                      "${SERVICE}=${IMAGE}" \
+                                      -n "$NS"
 
-                        kubectl rollout status "deployment/${SERVICE}" \
-                          -n "$NS" \
-                          --timeout=180s
+                                    # Wait until Kubernetes reports the rollout is complete
+                                    kubectl rollout status "deployment/${SERVICE}" \
+                                      -n "$NS" \
+                                      --timeout=180s
 
-                        # rollout status already blocks until Ready. This re-read catches
-                        # an admission controller or operator mutating the image after us.
-                        CURRENT_IMAGE=$(kubectl get deploy "${SERVICE}" -n "$NS" \
-                          -o jsonpath='{.spec.template.spec.containers[0].image}')
-                        if [[ "${CURRENT_IMAGE}" != "${IMAGE}" ]]; then
-                          echo "ERROR: ${SERVICE} image is ${CURRENT_IMAGE}"
-                          echo "        expected ${IMAGE}"
-                          kubectl describe deploy "${SERVICE}" -n "$NS"
-                          exit 1
-                        fi
+                                    # Double-check the image was not mutated by any admission controller / operator
+                                    CURRENT_IMAGE=$(kubectl get deploy "${SERVICE}" -n "$NS" \
+                                      -o jsonpath='{.spec.template.spec.containers[0].image}')
+                                    if [[ "${CURRENT_IMAGE}" != "${IMAGE}" ]]; then
+                                      echo "ERROR: ${SERVICE} image is ${CURRENT_IMAGE}"
+                                      echo "        expected ${IMAGE}"
+                                      kubectl describe deploy "${SERVICE}" -n "$NS"
+                                      exit 1
+                                    fi
 
-                        READY=$(kubectl get deploy "${SERVICE}" -n "$NS" -o jsonpath='{.status.readyReplicas}')
-                        DESIRED=$(kubectl get deploy "${SERVICE}" -n "$NS" -o jsonpath='{.status.replicas}')
-                        READY=${READY:-0}
-                        DESIRED=${DESIRED:-0}
-                        if [[ "${READY}" != "${DESIRED}" || "${DESIRED}" -eq 0 ]]; then
-                          echo "ERROR: ${SERVICE} is not fully Ready (${READY}/${DESIRED})"
-                          kubectl get pods -n "$NS" -l "app.kubernetes.io/name=${SERVICE}"
-                          exit 1
-                        fi
+                                    # Check replica counts
+                                    READY=$(kubectl get deploy "${SERVICE}" -n "$NS" -o jsonpath='{.status.readyReplicas}')
+                                    DESIRED=$(kubectl get deploy "${SERVICE}" -n "$NS" -o jsonpath='{.status.replicas}')
+                                    READY=${READY:-0}
+                                    DESIRED=${DESIRED:-0}
+                                    if [[ "${READY}" != "${DESIRED}" || "${DESIRED}" -eq 0 ]]; then
+                                      echo "ERROR: ${SERVICE} is not fully Ready (${READY}/${DESIRED})"
+                                      kubectl get pods -n "$NS" -l "app.kubernetes.io/name=${SERVICE}"
+                                      exit 1
+                                    fi
 
-                        echo "[$(date +'%H:%M:%S')] - The ${SERVICE} rolled out and verified (${READY}/${DESIRED})"
-                      done
+                                    # ------------------------------------------------
+                                    # Extra health check (new)
+                                    # Wait until every pod for this service is Ready.
+                                    # This catches cases where the Deployment says Ready
+                                    # but individual pods are still starting or crashing.
+                                    # ------------------------------------------------
+                                    echo "Waiting for all pods of ${SERVICE} to be Ready..."
+                                    kubectl wait \
+                                      --for=condition=ready pod \
+                                      -l "app.kubernetes.io/name=${SERVICE}" \
+                                      -n "$NS" \
+                                      --timeout=120s
 
-                      echo ""
-                      echo "=== Final image list ==="
-                      kubectl get deploy -n "$NS" \
-                        -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image,READY:.status.readyReplicas
+                                    echo "[$(date +'%H:%M:%S')] - The ${SERVICE} rolled out and verified (${READY}/${DESIRED})"
+                                  done
 
-                      echo ""
-                      echo "All services deployed and verified successfully."
-                  displayName: "Deploy apps to $(NAMESPACE) namespace"
+                                  echo ""
+                                  echo "=== Final image list ==="
+                                  kubectl get deploy -n "$NS" \
+                                    -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image,READY:.status.readyReplicas
 
-                # Diagnostics on failure. Costs nothing on a green run.
-                - script: |
-                      NS="$(NAMESPACE)"
-                      echo "=== Pods ==="
-                      kubectl get pods -n "$NS" -o wide || true
-                      echo "=== Recent events ==="
-                      kubectl get events -n "$NS" --sort-by=.lastTimestamp | tail -40 || true
-                  displayName: "Dump namespace state on failure"
-                  condition: failed()
+                                  echo ""
+                                  echo "All services deployed and verified successfully."
+                              displayName: "Deploy apps to $(NAMESPACE) namespace"
+
+                            # ------------------------------------------------
+                            # Diagnostics on failure. Costs nothing on a green run.
+                            # ------------------------------------------------
+                            - script: |
+                                  NS="$(NAMESPACE)"
+                                  echo "=== Pods ==="
+                                  kubectl get pods -n "$NS" -o wide || true
+                                  echo "=== Recent events ==="
+                                  kubectl get events -n "$NS" --sort-by=.lastTimestamp | tail -40 || true
+                              displayName: "Dump namespace state on failure"
+                              condition: failed()
