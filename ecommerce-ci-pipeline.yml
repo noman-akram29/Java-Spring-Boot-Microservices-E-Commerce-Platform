@@ -96,7 +96,7 @@ stages:
                               --file "${SERVICE}/Dockerfile" \
                               "${SERVICE}"
 
-                            # Pass 1: full report (vuln + secret + misconfig) – never fails the build.
+                            # Pass 1: full report (vuln + secret + misconfig) - never fails the build.
                             # Gives you something to triage when pass 2 kills the build.
                             echo "=== Trivy full report (vuln + secret + misconfig) ==="
                             docker run --rm \
@@ -166,7 +166,7 @@ stages:
                               "/out/${SERVICE}-${TAG}-trivy.json"
                           echo "Created ${SERVICE}-${TAG}-trivy.sarif"
                         else
-                          echo "WARNING: ${JSON_FILE} not found – skipping SARIF conversion"
+                          echo "WARNING: ${JSON_FILE} not found - skipping SARIF conversion"
                         fi
                       done
                   displayName: "Convert Trivy reports to SARIF"
