@@ -6,10 +6,10 @@
 #   using Docker Compose on the self-hosted Azure DevOps agent.
 #
 # Target:
-#   Developer's local PC
+#   Developer's local PC / WSL Linux environment
 #
 # Infrastructure:
-#   Docker Desktop / Docker Engine
+#   Docker Engine / Docker Desktop
 #
 # Does NOT use:
 #   - AWS
@@ -27,24 +27,56 @@
 #       ↓
 #   Syft SBOM
 #       ↓
+#   Generate .env + Docker secrets
+#       ↓
 #   Docker Compose Deploy
 #       ↓
 #   Smoke Test
 #
 # IMPORTANT:
-#   The same IMAGE_TAG is used throughout the pipeline.
+#
+#   Build, Security and Deploy intentionally target the same
+#   self-hosted Docker agent:
+#
+#       e-commerce-agent
+#
+#   This allows the SHA-tagged Docker images built during the
+#   Build stage to remain available in the Docker daemon for
+#   Security scanning and deployment.
+#
+# IMAGE TAG:
+#
+#   Build.SourceVersion is used as the immutable image tag.
 #
 #   Example:
 #
 #   IMAGE_TAG=3423ec6033cd5bd4a9a339528040047a753e697f
 #
-#   becomes:
+#   Images:
 #
 #   ecommerce/api-gateway:3423ec6033cd5bd4a9a339528040047a753e697f
 #   ecommerce/product-service:3423ec6033cd5bd4a9a339528040047a753e697f
 #   ecommerce/inventory-service:3423ec6033cd5bd4a9a339528040047a753e697f
 #   ecommerce/order-service:3423ec6033cd5bd4a9a339528040047a753e697f
 #   ecommerce/notification-service:3423ec6033cd5bd4a9a339528040047a753e697f
+#
+# SECURITY:
+#
+#   Secrets are stored in Azure DevOps Variable Group:
+#
+#       ecommerce-local
+#
+#   The pipeline generates:
+#
+#       .env
+#       secrets/mysql_root_password.txt
+#       secrets/mongo_root_password.txt
+#
+#   These files are NOT committed to Git.
+# ============================================================
+
+# ============================================================
+# TRIGGERS
 # ============================================================
 
 trigger:
@@ -55,40 +87,97 @@ trigger:
 
 pr: none
 
+# ============================================================
+# VARIABLES
+# ============================================================
+
 variables:
+    # Azure DevOps Variable Group.
+    #
+    # This group must contain all application configuration
+    # variables and secrets required by Docker Compose.
     - group: ecommerce-local
 
+    # Docker Compose project name.
     - name: COMPOSE_PROJECT_NAME
       value: ecommerce-local
 
     # Immutable image tag.
-    # Build.SourceVersion is the Git commit SHA.
+    #
+    # Build.SourceVersion = Git commit SHA.
     - name: IMAGE_TAG
       value: $(Build.SourceVersion)
 
+# ============================================================
+# AGENT
+# ============================================================
+
 pool:
     name: e-commerce-pool
+
     demands:
         - Agent.Name -equals e-commerce-agent
 
+# ============================================================
+# STAGES
+# ============================================================
+
 stages:
-    # ========================================================
-    # STAGE 1 — TEST
-    # ========================================================
+    # ==========================================================
+    # STAGE 1 — UNIT TESTS
+    # ==========================================================
 
     - stage: Test
+
       displayName: "Run Unit Tests"
 
       jobs:
           - job: UnitTests
+
             displayName: "Run Maven unit tests"
 
             steps:
+                # --------------------------------------------------
+                # Checkout source
+                # --------------------------------------------------
+
                 - checkout: self
+
                   clean: true
+
                   fetchDepth: 1
 
-                - script: |
+                # --------------------------------------------------
+                # Verify required variables
+                # --------------------------------------------------
+
+                - bash: |
+
+                      set -euo pipefail
+
+                      echo "============================================"
+                      echo "Checking required pipeline variables"
+                      echo "============================================"
+
+                      if [ -z "${SERVICES:-}" ]; then
+                        echo "ERROR: SERVICES variable is not defined."
+                        exit 1
+                      fi
+
+                      echo "SERVICES variable is configured."
+
+                      echo ""
+                      echo "Services:"
+                      echo "${SERVICES}"
+
+                  displayName: "Validate pipeline variables"
+
+                # --------------------------------------------------
+                # Maven tests
+                # --------------------------------------------------
+
+                - bash: |
+
                       set -euo pipefail
 
                       echo "============================================"
@@ -99,64 +188,121 @@ stages:
 
                         if [ -f "${SERVICE}/pom.xml" ]; then
 
+                          echo ""
                           echo "--------------------------------------------"
                           echo "Testing ${SERVICE}"
                           echo "--------------------------------------------"
 
                           (
                             cd "${SERVICE}"
+
                             chmod +x mvnw
+
                             ./mvnw -B test
                           )
+
+                        else
+
+                          echo ""
+                          echo "Skipping ${SERVICE}"
+                          echo "No pom.xml found."
 
                         fi
 
                       done
 
                       echo ""
+                      echo "============================================"
                       echo "All module tests passed."
+                      echo "============================================"
 
                   displayName: "Run Maven unit tests"
 
+                # --------------------------------------------------
+                # Publish JUnit results
+                # --------------------------------------------------
+
                 - task: PublishTestResults@2
+
                   displayName: "Publish test results"
+
                   condition: succeededOrFailed()
+
                   inputs:
                       testResultsFormat: "JUnit"
+
                       testResultsFiles: "**/target/surefire-reports/TEST-*.xml"
+
                       mergeTestResults: true
+
                       failTaskOnFailedTests: true
 
-    # ========================================================
-    # STAGE 2 — BUILD
-    # ========================================================
+    # ==========================================================
+    # STAGE 2 — DOCKER BUILD
+    # ==========================================================
 
     - stage: Build
+
       displayName: "Build Docker Compose Images"
+
       dependsOn: Test
+
+      condition: succeeded()
 
       jobs:
           - job: BuildImages
+
             displayName: "Build local Docker images"
 
             steps:
+                # --------------------------------------------------
+                # Checkout
+                # --------------------------------------------------
+
                 - checkout: self
+
                   clean: true
+
                   fetchDepth: 1
 
-                - script: |
-                      set -euo pipefail
+                # --------------------------------------------------
+                # Validate Docker
+                # --------------------------------------------------
 
-                      export IMAGE_TAG="$(Build.SourceVersion)"
+                - bash: |
+
+                      set -euo pipefail
 
                       echo "============================================"
                       echo "Docker environment"
                       echo "============================================"
 
                       docker version
-                      docker compose version
 
                       echo ""
+
+                      docker compose version
+
+                  displayName: "Validate Docker environment"
+
+                # --------------------------------------------------
+                # Validate Compose configuration
+                #
+                # NOTE:
+                #
+                # This requires the non-secret Compose variables
+                # to be available through the ecommerce-local group.
+                #
+                # If your Compose file requires secrets for config
+                # interpolation, those are generated in Deploy.
+                # --------------------------------------------------
+
+                - bash: |
+
+                      set -euo pipefail
+
+                      export IMAGE_TAG="$(Build.SourceVersion)"
+
                       echo "============================================"
                       echo "Image tag"
                       echo "============================================"
@@ -175,10 +321,23 @@ stages:
                       echo ""
                       echo "Compose configuration is valid."
 
-                      echo ""
+                  displayName: "Validate Docker Compose configuration"
+
+                # --------------------------------------------------
+                # Build images
+                # --------------------------------------------------
+
+                - bash: |
+
+                      set -euo pipefail
+
+                      export IMAGE_TAG="$(Build.SourceVersion)"
+
                       echo "============================================"
                       echo "Building Docker Compose images"
                       echo "============================================"
+
+                      echo "IMAGE_TAG=${IMAGE_TAG}"
 
                       docker compose \
                         -f docker-compose-cicd.yml \
@@ -186,7 +345,7 @@ stages:
 
                       echo ""
                       echo "============================================"
-                      echo "Built application images"
+                      echo "Verifying application images"
                       echo "============================================"
 
                       for SERVICE in $(SERVICES); do
@@ -196,50 +355,61 @@ stages:
                         echo ""
                         echo "Checking ${IMAGE}"
 
-                        docker image inspect "${IMAGE}" >/dev/null
+                        if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+
+                          echo ""
+                          echo "ERROR: Expected image was not built:"
+                          echo "${IMAGE}"
+
+                          exit 1
+
+                        fi
 
                         echo "Found ${IMAGE}"
 
                       done
 
                       echo ""
+                      echo "============================================"
                       echo "All application images built successfully."
+                      echo "============================================"
 
                   displayName: "Docker Compose build"
 
-    # ========================================================
+    # ==========================================================
     # STAGE 3 — SECURITY
-    # ========================================================
-    #
-    # IMPORTANT:
-    #   This stage DOES NOT rebuild the images.
-    #
-    #   It scans the exact images generated by Build.
-    #
-    #   BUILD
-    #      ↓
-    #   IMAGE:${IMAGE_TAG}
-    #      ↓
-    #   TRIVY
-    #      ↓
-    #   SYFT
-    #
-    # ========================================================
+    # ==========================================================
 
     - stage: Security
+
       displayName: "Security Scan and SBOM"
+
       dependsOn: Build
+
+      condition: succeeded()
 
       jobs:
           - job: SecurityScan
+
             displayName: "Trivy scan and Syft SBOM"
 
             steps:
+                # --------------------------------------------------
+                # Checkout
+                # --------------------------------------------------
+
                 - checkout: self
+
                   clean: true
+
                   fetchDepth: 1
 
-                - script: |
+                # --------------------------------------------------
+                # Security scan + SBOM
+                # --------------------------------------------------
+
+                - bash: |
+
                       set -euo pipefail
 
                       export IMAGE_TAG="$(Build.SourceVersion)"
@@ -256,6 +426,14 @@ stages:
 
                       echo ""
                       echo "============================================"
+                      echo "Checking security tool versions"
+                      echo "============================================"
+
+                      echo "TRIVY_VERSION=$(TRIVY_VERSION)"
+                      echo "SYFT_VERSION=$(SYFT_VERSION)"
+
+                      echo ""
+                      echo "============================================"
                       echo "Verifying previously built images"
                       echo "============================================"
 
@@ -263,22 +441,32 @@ stages:
 
                         IMAGE="ecommerce/${SERVICE}:${IMAGE_TAG}"
 
+                        echo ""
                         echo "Checking ${IMAGE}"
 
                         if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+
                           echo ""
                           echo "ERROR: Expected image does not exist:"
                           echo "${IMAGE}"
+
                           echo ""
                           echo "The Security stage must scan the images"
                           echo "created by the Build stage."
+
                           exit 1
+
                         fi
 
                       done
 
                       echo ""
                       echo "All expected SHA-tagged images are available."
+
+
+                      # ==================================================
+                      # TRIVY
+                      # ==================================================
 
                       echo ""
                       echo "============================================"
@@ -294,34 +482,55 @@ stages:
                         echo "Trivy: ${IMAGE}"
                         echo "--------------------------------------------"
 
+
+                        # ------------------------------------------------
+                        # Generate JSON report
+                        # ------------------------------------------------
+
                         docker run --rm \
                           -v /var/run/docker.sock:/var/run/docker.sock \
                           -v "$(Build.SourcesDirectory):/src:ro" \
                           -v "${SECURITY_DIR}:/out" \
-                          aquasec/trivy:$(TRIVY_VERSION) image \
-                            --scanners vuln,secret,misconfig \
-                            --format json \
-                            --output "/out/${SERVICE}-trivy.json" \
-                            --ignorefile /src/.trivyignore \
-                            --no-progress \
-                            "${IMAGE}"
+                          "aquasec/trivy:$(TRIVY_VERSION)" \
+                          image \
+                          --scanners vuln,secret,misconfig \
+                          --format json \
+                          --output "/out/${SERVICE}-trivy.json" \
+                          --ignorefile /src/.trivyignore \
+                          --no-progress \
+                          "${IMAGE}"
+
+
+                        # ------------------------------------------------
+                        # Security gate
+                        #
+                        # Fail only on HIGH and CRITICAL vulnerabilities.
+                        # ------------------------------------------------
 
                         docker run --rm \
                           -v /var/run/docker.sock:/var/run/docker.sock \
                           -v "$(Build.SourcesDirectory):/src:ro" \
-                          aquasec/trivy:$(TRIVY_VERSION) image \
-                            --scanners vuln,secret,misconfig \
-                            --severity CRITICAL,HIGH \
-                            --exit-code 1 \
-                            --ignore-unfixed \
-                            --ignorefile /src/.trivyignore \
-                            --no-progress \
-                            "${IMAGE}"
+                          "aquasec/trivy:$(TRIVY_VERSION)" \
+                          image \
+                          --scanners vuln,secret,misconfig \
+                          --severity CRITICAL,HIGH \
+                          --exit-code 1 \
+                          --ignore-unfixed \
+                          --ignorefile /src/.trivyignore \
+                          --no-progress \
+                          "${IMAGE}"
 
                       done
 
                       echo ""
-                      echo "All application images passed the Trivy gate."
+                      echo "============================================"
+                      echo "All application images passed Trivy."
+                      echo "============================================"
+
+
+                      # ==================================================
+                      # SYFT
+                      # ==================================================
 
                       echo ""
                       echo "============================================"
@@ -337,103 +546,337 @@ stages:
                         echo "Syft: ${IMAGE}"
                         echo "--------------------------------------------"
 
-                        docker run --rm \
-                          -v /var/run/docker.sock:/var/run/docker.sock \
-                          -v "${SECURITY_DIR}:/out" \
-                          anchore/syft:$(SYFT_VERSION) \
-                            scan \
-                            "docker:${IMAGE}" \
-                            -o "cyclonedx-json=/out/${SERVICE}-sbom-cyclonedx.json"
+
+                        # ------------------------------------------------
+                        # CycloneDX
+                        # ------------------------------------------------
 
                         docker run --rm \
                           -v /var/run/docker.sock:/var/run/docker.sock \
                           -v "${SECURITY_DIR}:/out" \
-                          anchore/syft:$(SYFT_VERSION) \
-                            scan \
-                            "docker:${IMAGE}" \
-                            -o "spdx-json=/out/${SERVICE}-sbom-spdx.json"
+                          "anchore/syft:$(SYFT_VERSION)" \
+                          scan \
+                          "docker:${IMAGE}" \
+                          -o "cyclonedx-json=/out/${SERVICE}-sbom-cyclonedx.json"
+
+
+                        # ------------------------------------------------
+                        # SPDX
+                        # ------------------------------------------------
+
+                        docker run --rm \
+                          -v /var/run/docker.sock:/var/run/docker.sock \
+                          -v "${SECURITY_DIR}:/out" \
+                          "anchore/syft:$(SYFT_VERSION)" \
+                          scan \
+                          "docker:${IMAGE}" \
+                          -o "spdx-json=/out/${SERVICE}-sbom-spdx.json"
 
                       done
+
+
+                      # ==================================================
+                      # ARTIFACT LIST
+                      # ==================================================
 
                       echo ""
                       echo "============================================"
                       echo "Security artifacts generated"
                       echo "============================================"
 
-                      find "${SECURITY_DIR}" -maxdepth 1 -type f -print
+                      find "${SECURITY_DIR}" \
+                        -maxdepth 1 \
+                        -type f \
+                        -print
 
                   displayName: "Trivy security scan and Syft SBOM"
 
+                # --------------------------------------------------
+                # Publish security artifacts
+                # --------------------------------------------------
+
                 - task: PublishPipelineArtifact@1
+
                   displayName: "Publish security reports and SBOMs"
+
                   condition: succeededOrFailed()
+
                   inputs:
                       targetPath: "$(Build.ArtifactStagingDirectory)/security"
+
                       artifact: "local-security-$(Build.BuildId)"
+
                       publishLocation: "pipeline"
 
-    # ========================================================
+    # ==========================================================
     # STAGE 4 — DEPLOY
-    # ========================================================
-    #
-    # IMPORTANT:
-    #
-    #   DO NOT use:
-    #
-    #       docker compose up --build
-    #
-    #   because that could rebuild the image after scanning.
-    #
-    #   Instead:
-    #
-    #       docker compose up --no-build
-    #
-    #   This deploys the image that was already built
-    #   and scanned.
-    #
-    # ========================================================
+    # ==========================================================
 
     - stage: Deploy
+
       displayName: "Deploy with Docker Compose"
+
       dependsOn: Security
+
+      condition: succeeded()
 
       jobs:
           - job: ComposeDeploy
+
             displayName: "Deploy local Docker Compose stack"
 
             steps:
+                # --------------------------------------------------
+                # Checkout
+                # --------------------------------------------------
+
                 - checkout: self
+
                   clean: true
+
                   fetchDepth: 1
 
-                - script: |
+                # ==================================================
+                # GENERATE LOCAL ENVIRONMENT
+                # ==================================================
+                #
+                # Azure DevOps Variable Group does NOT automatically
+                # create a .env file.
+                #
+                # This step creates .env from ecommerce-local.
+                #
+                # DO NOT print the contents of .env.
+                #
+                # ==================================================
+
+                - bash: |
+
                       set -euo pipefail
 
                       echo "============================================"
                       echo "Preparing local environment"
                       echo "============================================"
 
+                      mkdir -p secrets
+
+
+                      # ------------------------------------------------
+                      # Generate .env
+                      # ------------------------------------------------
+
+                      cat > .env <<EOF
+
+                      MYSQL_PORT=${MYSQL_PORT}
+
+                      MYSQL_INVENTORY_USERNAME=${MYSQL_INVENTORY_USERNAME}
+                      MYSQL_INVENTORY_PASSWORD=${MYSQL_INVENTORY_PASSWORD}
+
+                      MYSQL_ORDER_USERNAME=${MYSQL_ORDER_USERNAME}
+                      MYSQL_ORDER_PASSWORD=${MYSQL_ORDER_PASSWORD}
+
+                      KAFKA_CONTROLLER_QUORUM_VOTERS=${KAFKA_CONTROLLER_QUORUM_VOTERS}
+                      KAFKA_CLUSTER_ID=${KAFKA_CLUSTER_ID}
+                      KAFKA_NODE_ID=${KAFKA_NODE_ID}
+                      KAFKA_PROCESS_ROLES=${KAFKA_PROCESS_ROLES}
+                      KAFKA_PORT=${KAFKA_PORT}
+
+                      MAILPIT_UI_PORT=${MAILPIT_UI_PORT}
+                      MAILPIT_SMTP_PORT=${MAILPIT_SMTP_PORT}
+
+                      INVENTORY_SERVICE_PORT=${INVENTORY_SERVICE_PORT}
+                      PRODUCT_SERVICE_PORT=${PRODUCT_SERVICE_PORT}
+                      ORDER_SERVICE_PORT=${ORDER_SERVICE_PORT}
+                      NOTIFICATION_SERVICE_PORT=${NOTIFICATION_SERVICE_PORT}
+                      API_GATEWAY_PORT=${API_GATEWAY_PORT}
+
+                      MONGO_ROOT_USERNAME=${MONGO_ROOT_USERNAME}
+                      MONGO_PRODUCT_USER=${MONGO_PRODUCT_USER}
+                      MONGO_PRODUCT_PASSWORD=${MONGO_PRODUCT_PASSWORD}
+                      MONGO_PORT=${MONGO_PORT}
+
+                      PRODUCT_DATABASE=${PRODUCT_DATABASE}
+                      INVENTORY_DATABASE=${INVENTORY_DATABASE}
+                      ORDER_DATABASE=${ORDER_DATABASE}
+
+                      GATEWAY_AUTH_PASSWORD=${GATEWAY_AUTH_PASSWORD}
+                      GATEWAY_JWT_SECRET=${GATEWAY_JWT_SECRET}
+
+                      EOF
+
+
+                      # ------------------------------------------------
+                      # Protect .env
+                      # ------------------------------------------------
+
+                      chmod 600 .env
+
+
+                      # ------------------------------------------------
+                      # Generate MySQL Docker secret
+                      # ------------------------------------------------
+
+                      printf '%s' "${MYSQL_ROOT_PASSWORD}" \
+                        > secrets/mysql_root_password.txt
+
+
+                      # ------------------------------------------------
+                      # Generate MongoDB Docker secret
+                      # ------------------------------------------------
+
+                      printf '%s' "${MONGO_ROOT_PASSWORD}" \
+                        > secrets/mongo_root_password.txt
+
+
+                      # ------------------------------------------------
+                      # Protect secret files
+                      # ------------------------------------------------
+
+                      chmod 600 \
+                        secrets/mysql_root_password.txt \
+                        secrets/mongo_root_password.txt
+
+
+                      echo ""
+                      echo "============================================"
+                      echo "Local environment prepared."
+                      echo "============================================"
+
+                      echo ".env created."
+                      echo "MySQL Docker secret created."
+                      echo "MongoDB Docker secret created."
+
+                      echo ""
+                      echo "Secret contents are intentionally not displayed."
+
+                  displayName: "Generate local environment and Docker secrets"
+
+                  env:
+                      # ------------------------------------------------
+                      # MySQL
+                      # ------------------------------------------------
+
+                      MYSQL_PORT: $(MYSQL_PORT)
+
+                      MYSQL_INVENTORY_USERNAME: $(MYSQL_INVENTORY_USERNAME)
+                      MYSQL_INVENTORY_PASSWORD: $(MYSQL_INVENTORY_PASSWORD)
+
+                      MYSQL_ORDER_USERNAME: $(MYSQL_ORDER_USERNAME)
+                      MYSQL_ORDER_PASSWORD: $(MYSQL_ORDER_PASSWORD)
+
+                      MYSQL_ROOT_PASSWORD: $(MYSQL_ROOT_PASSWORD)
+
+                      # ------------------------------------------------
+                      # Kafka
+                      # ------------------------------------------------
+
+                      KAFKA_CONTROLLER_QUORUM_VOTERS: $(KAFKA_CONTROLLER_QUORUM_VOTERS)
+                      KAFKA_CLUSTER_ID: $(KAFKA_CLUSTER_ID)
+                      KAFKA_NODE_ID: $(KAFKA_NODE_ID)
+                      KAFKA_PROCESS_ROLES: $(KAFKA_PROCESS_ROLES)
+                      KAFKA_PORT: $(KAFKA_PORT)
+
+                      # ------------------------------------------------
+                      # Mailpit
+                      # ------------------------------------------------
+
+                      MAILPIT_UI_PORT: $(MAILPIT_UI_PORT)
+                      MAILPIT_SMTP_PORT: $(MAILPIT_SMTP_PORT)
+
+                      # ------------------------------------------------
+                      # Services
+                      # ------------------------------------------------
+
+                      INVENTORY_SERVICE_PORT: $(INVENTORY_SERVICE_PORT)
+                      PRODUCT_SERVICE_PORT: $(PRODUCT_SERVICE_PORT)
+                      ORDER_SERVICE_PORT: $(ORDER_SERVICE_PORT)
+                      NOTIFICATION_SERVICE_PORT: $(NOTIFICATION_SERVICE_PORT)
+                      API_GATEWAY_PORT: $(API_GATEWAY_PORT)
+
+                      # ------------------------------------------------
+                      # MongoDB
+                      # ------------------------------------------------
+
+                      MONGO_ROOT_USERNAME: $(MONGO_ROOT_USERNAME)
+                      MONGO_ROOT_PASSWORD: $(MONGO_ROOT_PASSWORD)
+
+                      MONGO_PRODUCT_USER: $(MONGO_PRODUCT_USER)
+                      MONGO_PRODUCT_PASSWORD: $(MONGO_PRODUCT_PASSWORD)
+
+                      MONGO_PORT: $(MONGO_PORT)
+
+                      # ------------------------------------------------
+                      # Databases
+                      # ------------------------------------------------
+
+                      PRODUCT_DATABASE: $(PRODUCT_DATABASE)
+                      INVENTORY_DATABASE: $(INVENTORY_DATABASE)
+                      ORDER_DATABASE: $(ORDER_DATABASE)
+
+                      # ------------------------------------------------
+                      # Gateway
+                      # ------------------------------------------------
+
+                      GATEWAY_AUTH_PASSWORD: $(GATEWAY_AUTH_PASSWORD)
+                      GATEWAY_JWT_SECRET: $(GATEWAY_JWT_SECRET)
+
+                # ==================================================
+                # VALIDATE GENERATED ENVIRONMENT
+                # ==================================================
+
+                - bash: |
+
+                      set -euo pipefail
+
+                      echo "============================================"
+                      echo "Validating generated environment"
+                      echo "============================================"
+
                       if [ ! -f ".env" ]; then
-                        echo "ERROR: .env file not found."
-                        echo "Create .env from .env.example on the local machine."
+                        echo "ERROR: .env was not generated."
                         exit 1
                       fi
 
                       if [ ! -f "secrets/mysql_root_password.txt" ]; then
-                        echo "ERROR: MySQL secret file not found."
+                        echo "ERROR: MySQL secret was not generated."
                         exit 1
                       fi
 
                       if [ ! -f "secrets/mongo_root_password.txt" ]; then
-                        echo "ERROR: MongoDB secret file not found."
+                        echo "ERROR: MongoDB secret was not generated."
                         exit 1
                       fi
 
-                      echo "Local environment files verified."
+                      echo "Required environment files exist."
 
-                  displayName: "Validate local configuration"
+                  displayName: "Validate generated environment"
 
-                - script: |
+                # ==================================================
+                # VALIDATE DOCKER COMPOSE
+                # ==================================================
+
+                - bash: |
+
+                      set -euo pipefail
+
+                      echo "============================================"
+                      echo "Validating Docker Compose configuration"
+                      echo "============================================"
+
+                      docker compose \
+                        -f docker-compose-cicd.yml \
+                        config --quiet
+
+                      echo ""
+                      echo "Docker Compose configuration is valid."
+
+                  displayName: "Validate Docker Compose"
+
+                # ==================================================
+                # DEPLOY
+                # ==================================================
+
+                - bash: |
+
                       set -euo pipefail
 
                       export IMAGE_TAG="$(Build.SourceVersion)"
@@ -451,7 +894,9 @@ stages:
 
                       docker compose \
                         -f docker-compose-cicd.yml \
-                        down --remove-orphans || true
+                        down \
+                        --remove-orphans || true
+
 
                       echo ""
                       echo "============================================"
@@ -466,53 +911,12 @@ stages:
                         --remove-orphans \
                         --wait
 
+
                       echo ""
                       echo "============================================"
                       echo "Docker Compose deployment successful"
                       echo "============================================"
 
-                      docker compose \
-                        -f docker-compose-cicd.yml \
-                        ps
-
-                  displayName: "Deploy Docker Compose stack"
-
-    # ========================================================
-    # STAGE 5 — SMOKE TEST
-    # ========================================================
-
-    - stage: SmokeTest
-      displayName: "Local Smoke Tests"
-      dependsOn: Deploy
-
-      jobs:
-          - job: SmokeTests
-            displayName: "Verify local application"
-
-            steps:
-                - checkout: self
-                  clean: true
-                  fetchDepth: 1
-
-                - script: |
-                      set -euo pipefail
-
-                      echo "============================================"
-                      echo "Application smoke tests"
-                      echo "============================================"
-
-                      echo ""
-                      echo "Checking API Gateway health..."
-
-                      curl \
-                        --fail \
-                        --silent \
-                        --show-error \
-                        http://localhost:8080/actuator/health
-
-                      echo ""
-                      echo ""
-                      echo "API Gateway health check passed."
 
                       echo ""
                       echo "============================================"
@@ -523,6 +927,79 @@ stages:
                         -f docker-compose-cicd.yml \
                         ps
 
+                  displayName: "Deploy Docker Compose stack"
+
+    # ==========================================================
+    # STAGE 5 — SMOKE TEST
+    # ==========================================================
+
+    - stage: SmokeTest
+
+      displayName: "Local Smoke Tests"
+
+      dependsOn: Deploy
+
+      condition: succeeded()
+
+      jobs:
+          - job: SmokeTests
+
+            displayName: "Verify local application"
+
+            steps:
+                # --------------------------------------------------
+                # Checkout
+                # --------------------------------------------------
+
+                - checkout: self
+
+                  clean: true
+
+                  fetchDepth: 1
+
+                # --------------------------------------------------
+                # Smoke test
+                # --------------------------------------------------
+
+                - bash: |
+
+                      set -euo pipefail
+
+                      echo "============================================"
+                      echo "Application smoke tests"
+                      echo "============================================"
+
+
+                      echo ""
+                      echo "Checking API Gateway health..."
+
+
+                      curl \
+                        --fail \
+                        --silent \
+                        --show-error \
+                        --retry 10 \
+                        --retry-delay 5 \
+                        --retry-connrefused \
+                        http://localhost:8080/actuator/health
+
+
+                      echo ""
+                      echo ""
+                      echo "API Gateway health check passed."
+
+
+                      echo ""
+                      echo "============================================"
+                      echo "Docker Compose state"
+                      echo "============================================"
+
+
+                      docker compose \
+                        -f docker-compose-cicd.yml \
+                        ps
+
+
                       echo ""
                       echo "============================================"
                       echo "LOCAL DEPLOYMENT SUCCESSFUL"
@@ -530,28 +1007,51 @@ stages:
 
                   displayName: "Run application smoke tests"
 
-    # ========================================================
-    # ALWAYS — DIAGNOSTICS
-    # ========================================================
+    # ==========================================================
+    # STAGE 6 — DIAGNOSTICS
+    # ==========================================================
+    #
+    # Runs when Deploy or SmokeTest fails.
+    #
+    # We deliberately use the same self-hosted agent so that
+    # Docker state and logs can be inspected.
+    #
+    # ==========================================================
 
     - stage: Diagnostics
+
       displayName: "Deployment Diagnostics"
 
       dependsOn:
           - Deploy
           - SmokeTest
 
-      condition: failed()
+      condition: |
+          or(
+            failed('Deploy'),
+            failed('SmokeTest')
+          )
 
       jobs:
           - job: Diagnostics
+
             displayName: "Collect Docker Compose diagnostics"
 
             steps:
+                # --------------------------------------------------
+                # Checkout
+                # --------------------------------------------------
+
                 - checkout: self
+
                   clean: false
 
-                - script: |
+                # --------------------------------------------------
+                # Docker Compose status
+                # --------------------------------------------------
+
+                - bash: |
+
                       echo "============================================"
                       echo "Docker Compose status"
                       echo "============================================"
@@ -560,6 +1060,7 @@ stages:
                         -f docker-compose-cicd.yml \
                         ps || true
 
+
                       echo ""
                       echo "============================================"
                       echo "Docker Compose logs"
@@ -567,7 +1068,9 @@ stages:
 
                       docker compose \
                         -f docker-compose-cicd.yml \
-                        logs --tail=200 || true
+                        logs \
+                        --tail=200 || true
+
 
                       echo ""
                       echo "============================================"
@@ -576,6 +1079,7 @@ stages:
 
                       docker ps -a || true
 
+
                       echo ""
                       echo "============================================"
                       echo "Docker images"
@@ -583,5 +1087,13 @@ stages:
 
                       docker images \
                         "ecommerce/*" || true
+
+
+                      echo ""
+                      echo "============================================"
+                      echo "Docker disk usage"
+                      echo "============================================"
+
+                      docker system df || true
 
                   displayName: "Collect deployment diagnostics"
