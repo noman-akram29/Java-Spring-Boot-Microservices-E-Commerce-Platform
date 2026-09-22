@@ -65,12 +65,13 @@
             <version>0.12.6</version>
         </dependency>
 
-        <!-- Fix CRITICAL + HIGH Bouncy Castle vulnerabilities -->
+        <!-- Bouncy Castle -->
         <dependency>
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcprov-jdk18on</artifactId>
             <version>1.85</version>
         </dependency>
+        
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-impl</artifactId>
