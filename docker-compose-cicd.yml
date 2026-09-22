@@ -335,7 +335,7 @@ networks:
 
 secrets:
     mysql_root_password:
-        environment: MYSQL_ROOT_PASSWORD
+        file: ./secrets/mysql_root_password.txt
 
     mongo_root_password:
-        environment: MONGO_ROOT_PASSWORD
+        file: ./secrets/mysql_root_password.txt

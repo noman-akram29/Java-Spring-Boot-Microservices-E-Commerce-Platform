@@ -1,0 +1,1215 @@
+```yaml
+# ============================================================
+# ecommerce-local-pipeline.yml
+#
+# Local CI/CD
+#
+# Agent:
+#   Pool  : e-commerce-pool
+#   Agent : e-commerce-agent
+#
+# Target:
+#   Local Docker Desktop
+#
+# Compose:
+#   docker-compose-cicd.yml
+#
+# Flow:
+#   Unit Tests
+#       ↓
+#   Build Images
+#       ↓
+#   Trivy Full Scan
+#       ↓
+#   Syft SBOM
+#       ↓
+#   Trivy HIGH/CRITICAL Gate
+#       ↓
+#   Verify Exact Images
+#       ↓
+#   Docker Compose Deploy
+#       ↓
+#   Health Checks
+#       ↓
+#   Smoke Tests
+#
+# Images are tagged with the Git commit SHA.
+# No ECR.
+# No AWS.
+# No Kubernetes.
+#
+# IMPORTANT:
+# Build / Scan / SBOM / Deploy / Smoke Test run in the
+# SAME JOB so Docker images remain available on the same
+# Docker daemon.
+# ============================================================
+
+trigger:
+    branches:
+        include:
+            - feature/cicd
+            - staging
+
+pr: none
+
+variables:
+
+    - group: ecommerce-local
+
+    - name: IMAGE_TAG
+      value: $(Build.SourceVersion)
+
+    - name: COMPOSE_FILE
+      value: docker-compose-cicd.yml
+
+    - name: COMPOSE_PROJECT_NAME
+      value: ecommerce-local
+
+pool:
+    name: $(AGENT_POOL)
+
+    demands:
+        - Agent.Name -equals $(LINUX_AGENT)
+
+stages:
+
+# ============================================================
+# STAGE 1
+# UNIT TESTS
+# ============================================================
+
+    - stage: Test
+      displayName: "Unit Tests"
+      jobs:
+
+          - job: UnitTests
+            displayName: "Run Maven unit tests"
+            steps:
+                - checkout: self
+                  clean: true
+                  fetchDepth: 1
+
+                # ------------------------------------------------
+                # Unit tests
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "Run unit tests"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          $services = @(
+                              "api-gateway",
+                              "product-service",
+                              "inventory-service",
+                              "order-service",
+                              "notification-service"
+                          )
+
+                          Write-Host "=============================================="
+                          Write-Host "Running unit tests"
+                          Write-Host "=============================================="
+
+                          foreach ($service in $services) {
+
+                              $servicePath = Join-Path "$(Build.SourcesDirectory)" $service
+                              $pomPath = Join-Path $servicePath "pom.xml"
+
+                              if (-not (Test-Path $pomPath)) {
+                                  throw "pom.xml not found for $service"
+                              }
+
+                              Write-Host ""
+                              Write-Host "----------------------------------------------"
+                              Write-Host "Testing: $service"
+                              Write-Host "----------------------------------------------"
+
+                              Push-Location $servicePath
+
+                              try {
+
+                                  if (-not (Test-Path ".\mvnw.cmd")) {
+                                      throw "mvnw.cmd not found in $service"
+                                  }
+
+                                  & .\mvnw.cmd -B test
+
+                                  if ($LASTEXITCODE -ne 0) {
+                                      throw "Tests failed for $service"
+                                  }
+
+                              }
+                              finally {
+                                  Pop-Location
+                              }
+                          }
+
+                          Write-Host ""
+                          Write-Host "All module tests passed."
+
+
+                # ------------------------------------------------
+                # Publish test results
+                # ------------------------------------------------
+
+                - task: PublishTestResults@2
+
+                  displayName: "Publish test results"
+
+                  condition: succeededOrFailed()
+
+                  inputs:
+
+                      testResultsFormat: "JUnit"
+
+                      testResultsFiles: "**/target/surefire-reports/TEST-*.xml"
+
+                      mergeTestResults: true
+
+                      failTaskOnFailedTests: true
+
+                      testRunTitle: "E-Commerce Local CI"
+
+
+# ============================================================
+# STAGE 2
+# BUILD + SECURITY + SBOM + DEPLOY + SMOKE
+#
+# IMPORTANT:
+# Everything after checkout is intentionally in ONE JOB.
+#
+# Reason:
+# Docker images are stored in the local Docker daemon.
+# Keeping these operations in the same job guarantees that:
+#
+#   BUILD
+#      ↓
+#   SCAN
+#      ↓
+#   SBOM
+#      ↓
+#   DEPLOY
+#
+# all use the same Docker daemon and exact image tags.
+# ============================================================
+
+    - stage: BuildSecurityDeploy
+
+      displayName: "Build, Scan, SBOM, Deploy & Smoke Test"
+
+      dependsOn: Test
+
+      condition: succeeded()
+
+      jobs:
+
+          - job: BuildSecurityDeploy
+
+            displayName: "Build, secure and deploy local Compose stack"
+
+            steps:
+
+                - checkout: self
+                  clean: true
+                  fetchDepth: 1
+
+
+                # ------------------------------------------------
+                # Verify Docker
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "Verify Docker and Compose"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          Write-Host "=============================================="
+                          Write-Host "Docker Environment"
+                          Write-Host "=============================================="
+
+                          docker version
+
+                          if ($LASTEXITCODE -ne 0) {
+                              throw "Docker is not available."
+                          }
+
+                          Write-Host ""
+                          Write-Host "=== Docker Compose ==="
+
+                          docker compose version
+
+                          if ($LASTEXITCODE -ne 0) {
+                              throw "Docker Compose is not available."
+                          }
+
+                          Write-Host ""
+                          Write-Host "=== Docker Disk Usage ==="
+
+                          docker system df
+
+
+                # ------------------------------------------------
+                # Validate Compose
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "Validate Docker Compose configuration"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          Set-Location "$(Build.SourcesDirectory)"
+
+                          Write-Host "Compose file : $(COMPOSE_FILE)"
+                          Write-Host "Project      : $(COMPOSE_PROJECT_NAME)"
+                          Write-Host "Image tag    : $(IMAGE_TAG)"
+
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              config --quiet
+
+                          if ($LASTEXITCODE -ne 0) {
+                              throw "Docker Compose configuration validation failed."
+                          }
+
+                          Write-Host "Compose configuration is valid."
+
+                  env:
+
+                      IMAGE_TAG: $(IMAGE_TAG)
+
+                      COMPOSE_PROJECT_NAME: $(COMPOSE_PROJECT_NAME)
+
+                      API_GATEWAY_PORT: $(API_GATEWAY_PORT)
+                      PRODUCT_SERVICE_PORT: $(PRODUCT_SERVICE_PORT)
+                      INVENTORY_SERVICE_PORT: $(INVENTORY_SERVICE_PORT)
+                      ORDER_SERVICE_PORT: $(ORDER_SERVICE_PORT)
+                      NOTIFICATION_SERVICE_PORT: $(NOTIFICATION_SERVICE_PORT)
+
+                      MONGO_PORT: $(MONGO_PORT)
+                      MONGO_ROOT_USERNAME: $(MONGO_ROOT_USERNAME)
+                      MONGO_ROOT_PASSWORD: $(MONGO_ROOT_PASSWORD)
+                      MONGO_PRODUCT_USER: $(MONGO_PRODUCT_USER)
+                      MONGO_PRODUCT_PASSWORD: $(MONGO_PRODUCT_PASSWORD)
+                      PRODUCT_DATABASE: $(PRODUCT_DATABASE)
+
+                      MYSQL_PORT: $(MYSQL_PORT)
+                      MYSQL_ROOT_USERNAME: $(MYSQL_ROOT_USERNAME)
+                      MYSQL_ROOT_PASSWORD: $(MYSQL_ROOT_PASSWORD)
+                      MYSQL_INVENTORY_USERNAME: $(MYSQL_INVENTORY_USERNAME)
+                      MYSQL_INVENTORY_PASSWORD: $(MYSQL_INVENTORY_PASSWORD)
+                      MYSQL_ORDER_USERNAME: $(MYSQL_ORDER_USERNAME)
+                      MYSQL_ORDER_PASSWORD: $(MYSQL_ORDER_PASSWORD)
+                      INVENTORY_DATABASE: $(INVENTORY_DATABASE)
+                      ORDER_DATABASE: $(ORDER_DATABASE)
+
+                      KAFKA_CLUSTER_ID: $(KAFKA_CLUSTER_ID)
+                      KAFKA_NODE_ID: $(KAFKA_NODE_ID)
+                      KAFKA_PROCESS_ROLES: $(KAFKA_PROCESS_ROLES)
+                      KAFKA_CONTROLLER_QUORUM_VOTERS: $(KAFKA_CONTROLLER_QUORUM_VOTERS)
+                      KAFKA_PORT: $(KAFKA_PORT)
+
+                      MAILPIT_UI_PORT: $(MAILPIT_UI_PORT)
+                      MAILPIT_SMTP_PORT: $(MAILPIT_SMTP_PORT)
+
+                      GATEWAY_AUTH_USERNAME: $(GATEWAY_AUTH_USERNAME)
+                      GATEWAY_AUTH_PASSWORD: $(GATEWAY_AUTH_PASSWORD)
+                      GATEWAY_JWT_SECRET: $(GATEWAY_JWT_SECRET)
+
+
+                # ------------------------------------------------
+                # Build images
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "Build Docker images"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          Set-Location "$(Build.SourcesDirectory)"
+
+                          Write-Host "=============================================="
+                          Write-Host "Building application images"
+                          Write-Host "=============================================="
+
+                          Write-Host "IMAGE_TAG = $(IMAGE_TAG)"
+
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              build --pull
+
+                          if ($LASTEXITCODE -ne 0) {
+                              throw "Docker Compose build failed."
+                          }
+
+                          Write-Host ""
+                          Write-Host "=== Built images ==="
+
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              images
+
+                  env:
+
+                      IMAGE_TAG: $(IMAGE_TAG)
+
+                      COMPOSE_PROJECT_NAME: $(COMPOSE_PROJECT_NAME)
+
+                      API_GATEWAY_PORT: $(API_GATEWAY_PORT)
+                      PRODUCT_SERVICE_PORT: $(PRODUCT_SERVICE_PORT)
+                      INVENTORY_SERVICE_PORT: $(INVENTORY_SERVICE_PORT)
+                      ORDER_SERVICE_PORT: $(ORDER_SERVICE_PORT)
+                      NOTIFICATION_SERVICE_PORT: $(NOTIFICATION_SERVICE_PORT)
+
+                      MONGO_PORT: $(MONGO_PORT)
+                      MONGO_ROOT_USERNAME: $(MONGO_ROOT_USERNAME)
+                      MONGO_ROOT_PASSWORD: $(MONGO_ROOT_PASSWORD)
+                      MONGO_PRODUCT_USER: $(MONGO_PRODUCT_USER)
+                      MONGO_PRODUCT_PASSWORD: $(MONGO_PRODUCT_PASSWORD)
+                      PRODUCT_DATABASE: $(PRODUCT_DATABASE)
+
+                      MYSQL_PORT: $(MYSQL_PORT)
+                      MYSQL_ROOT_USERNAME: $(MYSQL_ROOT_USERNAME)
+                      MYSQL_ROOT_PASSWORD: $(MYSQL_ROOT_PASSWORD)
+                      MYSQL_INVENTORY_USERNAME: $(MYSQL_INVENTORY_USERNAME)
+                      MYSQL_INVENTORY_PASSWORD: $(MYSQL_INVENTORY_PASSWORD)
+                      MYSQL_ORDER_USERNAME: $(MYSQL_ORDER_USERNAME)
+                      MYSQL_ORDER_PASSWORD: $(MYSQL_ORDER_PASSWORD)
+                      INVENTORY_DATABASE: $(INVENTORY_DATABASE)
+                      ORDER_DATABASE: $(ORDER_DATABASE)
+
+                      KAFKA_CLUSTER_ID: $(KAFKA_CLUSTER_ID)
+                      KAFKA_NODE_ID: $(KAFKA_NODE_ID)
+                      KAFKA_PROCESS_ROLES: $(KAFKA_PROCESS_ROLES)
+                      KAFKA_CONTROLLER_QUORUM_VOTERS: $(KAFKA_CONTROLLER_QUORUM_VOTERS)
+                      KAFKA_PORT: $(KAFKA_PORT)
+
+                      MAILPIT_UI_PORT: $(MAILPIT_UI_PORT)
+                      MAILPIT_SMTP_PORT: $(MAILPIT_SMTP_PORT)
+
+                      GATEWAY_AUTH_USERNAME: $(GATEWAY_AUTH_USERNAME)
+                      GATEWAY_AUTH_PASSWORD: $(GATEWAY_AUTH_PASSWORD)
+                      GATEWAY_JWT_SECRET: $(GATEWAY_JWT_SECRET)
+
+
+                # ------------------------------------------------
+                # Verify exact images BEFORE scanning
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "Verify built images"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          $services = @(
+                              "api-gateway",
+                              "product-service",
+                              "inventory-service",
+                              "order-service",
+                              "notification-service"
+                          )
+
+                          Write-Host "=============================================="
+                          Write-Host "Verifying built application images"
+                          Write-Host "=============================================="
+
+                          foreach ($service in $services) {
+
+                              $image = "ecommerce/${service}:$(IMAGE_TAG)"
+
+                              Write-Host ""
+                              Write-Host "Checking: $image"
+
+                              docker image inspect $image > $null 2>&1
+
+                              if ($LASTEXITCODE -ne 0) {
+                                  throw "Expected image does not exist: $image"
+                              }
+
+                              Write-Host "OK: $image"
+                          }
+
+
+                # ------------------------------------------------
+                # Trivy full report
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "Trivy full security scan"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          $reportDir = "$(Build.ArtifactStagingDirectory)\security"
+
+                          New-Item `
+                              -ItemType Directory `
+                              -Force `
+                              -Path $reportDir | Out-Null
+
+                          $services = @(
+                              "api-gateway",
+                              "product-service",
+                              "inventory-service",
+                              "order-service",
+                              "notification-service"
+                          )
+
+                          foreach ($service in $services) {
+
+                              $image = "ecommerce/$service:$(IMAGE_TAG)"
+
+                              $report = "$service-$(IMAGE_TAG)-trivy.json"
+
+                              Write-Host ""
+                              Write-Host "=============================================="
+                              Write-Host "Trivy full scan"
+                              Write-Host "$image"
+                              Write-Host "=============================================="
+
+                              docker run --rm `
+                                  -v /var/run/docker.sock:/var/run/docker.sock `
+                                  -v "${reportDir}:/out" `
+                                  -v "$(Build.SourcesDirectory):/src:ro" `
+                                  "aquasec/trivy:$(TRIVY_VERSION)" `
+                                  image `
+                                  --scanners vuln,secret,misconfig `
+                                  --format json `
+                                  --output "/out/$report" `
+                                  --ignorefile /src/.trivyignore `
+                                  --no-progress `
+                                  "$image"
+
+                              if ($LASTEXITCODE -ne 0) {
+                                  throw "Full Trivy report failed for $service."
+                              }
+
+                              if (-not (Test-Path "$reportDir\$report")) {
+                                  throw "Trivy report was not created for $service."
+                              }
+                          }
+
+
+                # ------------------------------------------------
+                # Syft SBOM
+                #
+                # SBOM is generated BEFORE the security gate so
+                # rejected builds still produce an SBOM artifact.
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "Generate Syft SBOMs"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          $reportDir = "$(Build.ArtifactStagingDirectory)\security"
+
+                          New-Item `
+                              -ItemType Directory `
+                              -Force `
+                              -Path $reportDir | Out-Null
+
+                          $services = @(
+                              "api-gateway",
+                              "product-service",
+                              "inventory-service",
+                              "order-service",
+                              "notification-service"
+                          )
+
+                          foreach ($service in $services) {
+
+                              $image = "ecommerce/$service:$(IMAGE_TAG)"
+
+                              Write-Host ""
+                              Write-Host "Generating SBOM for $image"
+
+                              docker run --rm `
+                                  -v /var/run/docker.sock:/var/run/docker.sock `
+                                  -v "${reportDir}:/out" `
+                                  "anchore/syft:$(SYFT_VERSION)" `
+                                  "$image" `
+                                  -o "spdx-json=/out/$service-$(IMAGE_TAG).spdx.json" `
+                                  -o "syft-json=/out/$service-$(IMAGE_TAG).syft.json"
+
+                              if ($LASTEXITCODE -ne 0) {
+                                  throw "Syft failed for $service."
+                              }
+
+                              if (-not (Test-Path "$reportDir\$service-$(IMAGE_TAG).spdx.json")) {
+                                  throw "SPDX SBOM was not created for $service."
+                              }
+
+                              if (-not (Test-Path "$reportDir\$service-$(IMAGE_TAG).syft.json")) {
+                                  throw "Syft SBOM was not created for $service."
+                              }
+                          }
+
+
+                # ------------------------------------------------
+                # Trivy HIGH / CRITICAL gate
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "Trivy HIGH/CRITICAL gate"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          $services = @(
+                              "api-gateway",
+                              "product-service",
+                              "inventory-service",
+                              "order-service",
+                              "notification-service"
+                          )
+
+                          foreach ($service in $services) {
+
+                              $image = "ecommerce/$service:$(IMAGE_TAG)"
+
+                              Write-Host ""
+                              Write-Host "=============================================="
+                              Write-Host "Trivy security gate"
+                              Write-Host "$image"
+                              Write-Host "=============================================="
+
+                              docker run --rm `
+                                  -v /var/run/docker.sock:/var/run/docker.sock `
+                                  -v "$(Build.SourcesDirectory):/src:ro" `
+                                  "aquasec/trivy:$(TRIVY_VERSION)" `
+                                  image `
+                                  --scanners vuln,secret,misconfig `
+                                  --exit-code 1 `
+                                  --severity CRITICAL,HIGH `
+                                  --ignore-unfixed `
+                                  --ignorefile /src/.trivyignore `
+                                  --no-progress `
+                                  "$image"
+
+                              if ($LASTEXITCODE -ne 0) {
+                                  throw "Trivy security gate failed for $service."
+                              }
+
+                              Write-Host "$service passed Trivy."
+                          }
+
+
+                # ------------------------------------------------
+                # Convert Trivy reports to SARIF
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "Convert Trivy reports to SARIF"
+
+                  condition: succeededOrFailed()
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          $reportDir = "$(Build.ArtifactStagingDirectory)\security"
+
+                          $services = @(
+                              "api-gateway",
+                              "product-service",
+                              "inventory-service",
+                              "order-service",
+                              "notification-service"
+                          )
+
+                          foreach ($service in $services) {
+
+                              $jsonFile = "$reportDir\$service-$(IMAGE_TAG)-trivy.json"
+
+                              if (-not (Test-Path $jsonFile)) {
+                                  throw "Missing Trivy report: $jsonFile"
+                              }
+
+                              $sarifFile = "$service-$(IMAGE_TAG)-trivy.sarif"
+
+                              docker run --rm `
+                                  -v "${reportDir}:/out" `
+                                  "aquasec/trivy:$(TRIVY_VERSION)" `
+                                  convert `
+                                  --format sarif `
+                                  --output "/out/$sarifFile" `
+                                  "/out/$($service)-$(IMAGE_TAG)-trivy.json"
+
+                              if ($LASTEXITCODE -ne 0) {
+                                  throw "SARIF conversion failed for $service."
+                              }
+
+                              if (-not (Test-Path "$reportDir\$sarifFile")) {
+                                  throw "SARIF report was not created for $service."
+                              }
+                          }
+
+
+                # ------------------------------------------------
+                # Publish security artifacts
+                # ------------------------------------------------
+
+                - task: PublishPipelineArtifact@1
+
+                  displayName: "Publish security artifacts"
+
+                  condition: succeededOrFailed()
+
+                  inputs:
+
+                      targetPath: "$(Build.ArtifactStagingDirectory)\security"
+
+                      artifact: "local-security-$(Build.BuildId)"
+
+                      publishLocation: pipeline
+
+
+                # =================================================
+                # DEPLOY
+                #
+                # Only reached if all security gates passed.
+                # =================================================
+
+                - task: PowerShell@2
+
+                  displayName: "Verify exact images before deployment"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          $services = @(
+                              "api-gateway",
+                              "product-service",
+                              "inventory-service",
+                              "order-service",
+                              "notification-service"
+                          )
+
+                          Write-Host "=============================================="
+                          Write-Host "Pre-deployment image verification"
+                          Write-Host "=============================================="
+
+                          foreach ($service in $services) {
+
+                              $expected = "ecommerce/${service}:$(IMAGE_TAG)"
+
+                              Write-Host "Checking $expected"
+
+                              docker image inspect $expected > $null 2>&1
+
+                              if ($LASTEXITCODE -ne 0) {
+                                  throw "Scanned image is missing: $expected"
+                              }
+
+                              Write-Host "Verified: $expected"
+                          }
+
+
+                # ------------------------------------------------
+                # Deploy scanned images
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "Deploy scanned images"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          Set-Location "$(Build.SourcesDirectory)"
+
+                          Write-Host "=============================================="
+                          Write-Host "Docker Compose Deployment"
+                          Write-Host "=============================================="
+
+                          Write-Host "Compose file : $(COMPOSE_FILE)"
+                          Write-Host "Project      : $(COMPOSE_PROJECT_NAME)"
+                          Write-Host "Image tag    : $(IMAGE_TAG)"
+                          Write-Host "Commit       : $(Build.SourceVersion)"
+
+                          Write-Host "=============================================="
+
+                          # IMPORTANT:
+                          # --no-build guarantees that Compose does not
+                          # rebuild the images after security scanning.
+
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              up `
+                              --detach `
+                              --no-build `
+                              --remove-orphans `
+                              --wait `
+                              --wait-timeout 300
+
+                          if ($LASTEXITCODE -ne 0) {
+                              throw "Docker Compose deployment failed."
+                          }
+
+                          Write-Host ""
+                          Write-Host "=== Compose status ==="
+
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              ps
+
+                  env:
+
+                      IMAGE_TAG: $(IMAGE_TAG)
+
+                      COMPOSE_PROJECT_NAME: $(COMPOSE_PROJECT_NAME)
+
+                      API_GATEWAY_PORT: $(API_GATEWAY_PORT)
+                      PRODUCT_SERVICE_PORT: $(PRODUCT_SERVICE_PORT)
+                      INVENTORY_SERVICE_PORT: $(INVENTORY_SERVICE_PORT)
+                      ORDER_SERVICE_PORT: $(ORDER_SERVICE_PORT)
+                      NOTIFICATION_SERVICE_PORT: $(NOTIFICATION_SERVICE_PORT)
+
+                      MONGO_PORT: $(MONGO_PORT)
+                      MONGO_ROOT_USERNAME: $(MONGO_ROOT_USERNAME)
+                      MONGO_ROOT_PASSWORD: $(MONGO_ROOT_PASSWORD)
+                      MONGO_PRODUCT_USER: $(MONGO_PRODUCT_USER)
+                      MONGO_PRODUCT_PASSWORD: $(MONGO_PRODUCT_PASSWORD)
+                      PRODUCT_DATABASE: $(PRODUCT_DATABASE)
+
+                      MYSQL_PORT: $(MYSQL_PORT)
+                      MYSQL_ROOT_USERNAME: $(MYSQL_ROOT_USERNAME)
+                      MYSQL_ROOT_PASSWORD: $(MYSQL_ROOT_PASSWORD)
+                      MYSQL_INVENTORY_USERNAME: $(MYSQL_INVENTORY_USERNAME)
+                      MYSQL_INVENTORY_PASSWORD: $(MYSQL_INVENTORY_PASSWORD)
+                      MYSQL_ORDER_USERNAME: $(MYSQL_ORDER_USERNAME)
+                      MYSQL_ORDER_PASSWORD: $(MYSQL_ORDER_PASSWORD)
+                      INVENTORY_DATABASE: $(INVENTORY_DATABASE)
+                      ORDER_DATABASE: $(ORDER_DATABASE)
+
+                      KAFKA_CLUSTER_ID: $(KAFKA_CLUSTER_ID)
+                      KAFKA_NODE_ID: $(KAFKA_NODE_ID)
+                      KAFKA_PROCESS_ROLES: $(KAFKA_PROCESS_ROLES)
+                      KAFKA_CONTROLLER_QUORUM_VOTERS: $(KAFKA_CONTROLLER_QUORUM_VOTERS)
+                      KAFKA_PORT: $(KAFKA_PORT)
+
+                      MAILPIT_UI_PORT: $(MAILPIT_UI_PORT)
+                      MAILPIT_SMTP_PORT: $(MAILPIT_SMTP_PORT)
+
+                      GATEWAY_AUTH_USERNAME: $(GATEWAY_AUTH_USERNAME)
+                      GATEWAY_AUTH_PASSWORD: $(GATEWAY_AUTH_PASSWORD)
+                      GATEWAY_JWT_SECRET: $(GATEWAY_JWT_SECRET)
+
+
+                # =================================================
+                # SMOKE TESTS
+                # =================================================
+
+                # ------------------------------------------------
+                # API Gateway health
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "API Gateway health"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          $url = "http://localhost:$(API_GATEWAY_PORT)/actuator/health"
+
+                          Write-Host "Checking $url"
+
+                          $response = Invoke-WebRequest `
+                              -Uri $url `
+                              -UseBasicParsing `
+                              -TimeoutSec 30
+
+                          if ($response.StatusCode -ne 200) {
+                              throw "API Gateway health returned HTTP $($response.StatusCode)."
+                          }
+
+                          Write-Host "API Gateway is healthy."
+
+
+                # ------------------------------------------------
+                # Mailpit readiness
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "Mailpit readiness"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          $url = "http://localhost:$(MAILPIT_UI_PORT)/readyz"
+
+                          Write-Host "Checking $url"
+
+                          $response = Invoke-WebRequest `
+                              -Uri $url `
+                              -UseBasicParsing `
+                              -TimeoutSec 30
+
+                          if ($response.StatusCode -ne 200) {
+                              throw "Mailpit readiness returned HTTP $($response.StatusCode)."
+                          }
+
+                          Write-Host "Mailpit is ready."
+
+
+                # ------------------------------------------------
+                # Verify Compose deployment
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "Verify Compose deployment"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          Set-Location "$(Build.SourcesDirectory)"
+
+                          Write-Host "=== Compose services ==="
+
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              ps
+
+                          if ($LASTEXITCODE -ne 0) {
+                              throw "Unable to retrieve Compose service status."
+                          }
+
+                          Write-Host ""
+                          Write-Host "=== Compose images ==="
+
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              images
+
+                          Write-Host ""
+                          Write-Host "Expected Git SHA:"
+                          Write-Host "$(IMAGE_TAG)"
+
+                          $services = @(
+                              "api-gateway",
+                              "product-service",
+                              "inventory-service",
+                              "order-service",
+                              "notification-service"
+                          )
+
+                          foreach ($service in $services) {
+
+                              $expected = "ecommerce/${service}:$(IMAGE_TAG)"
+
+                              Write-Host ""
+                              Write-Host "Checking $expected"
+
+                              docker image inspect $expected > $null 2>&1
+
+                              if ($LASTEXITCODE -ne 0) {
+                                  throw "Expected image does not exist: $expected"
+                              }
+
+                              Write-Host "OK: $expected"
+                          }
+
+
+                # ------------------------------------------------
+                # JWT authentication smoke test
+                #
+                # Requires the local auth endpoint and credentials
+                # supplied through the ecommerce-local variable group.
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "JWT authentication smoke test"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Stop"
+
+                          $baseUrl = "http://localhost:$(API_GATEWAY_PORT)"
+
+                          $loginUrl = "$baseUrl/auth/login"
+
+                          Write-Host "Testing authentication endpoint:"
+                          Write-Host $loginUrl
+
+                          $body = @{
+                              username = "$(GATEWAY_AUTH_USERNAME)"
+                              password = "$(GATEWAY_AUTH_PASSWORD)"
+                          } | ConvertTo-Json
+
+                          try {
+
+                              $loginResponse = Invoke-RestMethod `
+                                  -Uri $loginUrl `
+                                  -Method Post `
+                                  -ContentType "application/json" `
+                                  -Body $body `
+                                  -TimeoutSec 30
+
+                          }
+                          catch {
+
+                              throw "JWT login request failed: $($_.Exception.Message)"
+                          }
+
+                          if (-not $loginResponse) {
+                              throw "JWT login returned an empty response."
+                          }
+
+                          $token = $loginResponse.token
+
+                          if ([string]::IsNullOrWhiteSpace($token)) {
+                              throw "JWT token was not returned by /auth/login."
+                          }
+
+                          Write-Host "JWT authentication succeeded."
+
+                          # NOTE:
+                          # Replace this endpoint with a protected API
+                          # endpoint that is guaranteed to exist in the
+                          # current application.
+
+                          $protectedUrl = "$baseUrl/api/inventory/health"
+
+                          Write-Host "Testing protected endpoint:"
+                          Write-Host $protectedUrl
+
+                          $headers = @{
+                              Authorization = "Bearer $token"
+                          }
+
+                          $protectedResponse = Invoke-WebRequest `
+                              -Uri $protectedUrl `
+                              -Headers $headers `
+                              -Method Get `
+                              -UseBasicParsing `
+                              -TimeoutSec 30
+
+                          if ($protectedResponse.StatusCode -ne 200) {
+                              throw "Protected API returned HTTP $($protectedResponse.StatusCode)."
+                          }
+
+                          Write-Host "Protected API authentication succeeded."
+
+
+                # ------------------------------------------------
+                # Final deployment message
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "Deployment summary"
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          Write-Host ""
+                          Write-Host "=============================================="
+                          Write-Host "LOCAL DEPLOYMENT SUCCESSFUL"
+                          Write-Host "=============================================="
+                          Write-Host "Commit : $(Build.SourceVersion)"
+                          Write-Host "Build  : $(Build.BuildId)"
+                          Write-Host ""
+                          Write-Host "Gateway:"
+                          Write-Host "http://localhost:$(API_GATEWAY_PORT)"
+                          Write-Host ""
+                          Write-Host "Mailpit:"
+                          Write-Host "http://localhost:$(MAILPIT_UI_PORT)"
+                          Write-Host "=============================================="
+
+
+                # =================================================
+                # FAILURE DIAGNOSTICS
+                #
+                # This step runs even if deployment/smoke tests fail.
+                # =================================================
+
+                - task: PowerShell@2
+
+                  displayName: "Collect Docker Compose diagnostics"
+
+                  condition: failed()
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Continue"
+
+                          Set-Location "$(Build.SourcesDirectory)"
+
+                          Write-Host "=============================================="
+                          Write-Host "Docker Diagnostics"
+                          Write-Host "=============================================="
+
+                          Write-Host ""
+                          Write-Host "=== Docker Info ==="
+
+                          docker info
+
+                          Write-Host ""
+                          Write-Host "=== Docker Disk Usage ==="
+
+                          docker system df
+
+                          Write-Host ""
+                          Write-Host "=== Compose Configuration ==="
+
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              config
+
+                          Write-Host ""
+                          Write-Host "=== Compose Status ==="
+
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              ps -a
+
+                          Write-Host ""
+                          Write-Host "=== Compose Images ==="
+
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              images
+
+                          Write-Host ""
+                          Write-Host "=== Container Logs ==="
+
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              logs `
+                              --no-color `
+                              --tail 200
+
+
+                # ------------------------------------------------
+                # Optional controlled cleanup
+                #
+                # Does NOT remove tagged application images because
+                # those may be needed for rollback/debugging.
+                #
+                # Only removes dangling images.
+                # ------------------------------------------------
+
+                - task: PowerShell@2
+
+                  displayName: "Docker cleanup"
+
+                  condition: always()
+
+                  inputs:
+
+                      targetType: inline
+
+                      script: |
+
+                          $ErrorActionPreference = "Continue"
+
+                          Write-Host "=============================================="
+                          Write-Host "Docker cleanup"
+                          Write-Host "=============================================="
+
+                          docker image prune -f
+
+                          Write-Host ""
+                          Write-Host "Docker disk usage after cleanup:"
+
+                          docker system df
+```
