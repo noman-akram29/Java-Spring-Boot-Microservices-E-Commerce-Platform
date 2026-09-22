@@ -524,7 +524,7 @@ stages:
           displayName: "Publish security artifacts"
           condition: succeededOrFailed()
           inputs:
-            targetPath: "$(Build.ArtifactStagingDirectory)\security"
+            targetPath: "$(Build.ArtifactStagingDirectory)/security"
             artifact: "local-security-$(Build.BuildId)"
             publishLocation: pipeline
 
