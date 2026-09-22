@@ -69,7 +69,7 @@ variables:
 pool:
     name: e-commerce-pool
     demands:
-        - Agent.Name -equals e-commerce-agent
+        - Agent.Name -equals ecommerce-wsl-linux-agent
 
 stages:
     # ========================================================
