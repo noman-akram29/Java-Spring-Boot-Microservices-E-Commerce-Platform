@@ -17,13 +17,15 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B --no-transfer-progress clean package -DskipTests
 
-# Download OpenTelemetry Java agent
+# Download and verify OpenTelemetry Java agent
 ARG OTEL_AGENT_VERSION=2.28.1
+ARG OTEL_AGENT_SHA256=faa89bdeebf9b1f52be4a4374689176717b02a59df2d8f8b6eb9aa39f9292589
 
 RUN mkdir -p /workspace/otel \
     && curl -fL \
     -o /workspace/otel/opentelemetry-javaagent.jar \
-    https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v${OTEL_AGENT_VERSION}/opentelemetry-javaagent.jar
+    https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v${OTEL_AGENT_VERSION}/opentelemetry-javaagent.jar \
+    && echo "${OTEL_AGENT_SHA256}  /workspace/otel/opentelemetry-javaagent.jar" | sha256sum -c -
 
 ############################################
 # Runtime Stage

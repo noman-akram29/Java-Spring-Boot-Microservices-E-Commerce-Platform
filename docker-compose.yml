@@ -24,11 +24,9 @@ services:
             <<: *default-healthcheck
             test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
             retries: 5
-        secrets:
-            - mongo_root_password
         environment:
             MONGO_INITDB_ROOT_USERNAME: "${MONGO_ROOT_USERNAME}"
-            MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
+            MONGO_INITDB_ROOT_PASSWORD: "${MONGO_ROOT_PASSWORD}"
             MONGO_PRODUCT_PASSWORD: "${MONGO_PRODUCT_PASSWORD}"
         expose:
             - "${MONGO_PORT}"
@@ -55,12 +53,10 @@ services:
             test:
                 [
                     "CMD-SHELL",
-                    'mysqladmin ping -h localhost -u root -p"$$(cat /run/secrets/mysql_root_password)"',
+                    'mysqladmin ping -h localhost -u root -p"$$MYSQL_ROOT_PASSWORD"',
                 ]
-        secrets:
-            - mysql_root_password
         environment:
-            MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+            MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
             MYSQL_INVENTORY_PASSWORD: "${MYSQL_INVENTORY_PASSWORD}"
             MYSQL_ORDER_PASSWORD: "${MYSQL_ORDER_PASSWORD}"
         expose:
@@ -159,7 +155,7 @@ services:
         environment:
             SERVER_PORT: ${PRODUCT_SERVICE_PORT}
             SPRING_DATA_MONGODB_URI: >-
-                mongodb://${MONGO_PRODUCT_USER}:${MONGO_PRODUCT_PASSWORD}@mongodb:${MONGO_PORT}/${PRODUCT_DATABASE}?authSource=admin
+                mongodb://${MONGO_PRODUCT_USERNAME}:${MONGO_PRODUCT_PASSWORD}@mongodb:${MONGO_PORT}/${PRODUCT_DATABASE}?authSource=admin
             INVENTORY_SERVICE_URL: "http://inventory-service:${INVENTORY_SERVICE_PORT}"
         expose:
             - "${PRODUCT_SERVICE_PORT}"
@@ -332,10 +328,3 @@ volumes:
 networks:
     ecommerce-network:
         driver: bridge
-
-secrets:
-    mysql_root_password:
-        file: ./secrets/mysql_root_password.txt
-
-    mongo_root_password:
-        file: ./secrets/mongo_root_password.txt
