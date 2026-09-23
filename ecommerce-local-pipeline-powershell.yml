@@ -548,29 +548,40 @@ stages:
                           $ErrorActionPreference = "Stop"
                           Set-Location "$(Build.SourcesDirectory)"
 
-                          # Compose looks for these exact names when project = ecommerce-local
-                          $secretFiles = @{
-                            "ecommerce-local_mysql_root_password" = "$(MYSQL_ROOT_PASSWORD)"
-                            "ecommerce-local_mongo_root_password" = "$(MONGO_ROOT_PASSWORD)"
-                          }
+                          Write-Host "Working directory: $(Get-Location)"
+                          Write-Host "Creating temporary secret files for Compose..."
 
-                          Write-Host "Creating temporary secret files..."
-                          foreach ($file in $secretFiles.Keys) {
-                            $content = $secretFiles[$file]
-                            if ([string]::IsNullOrWhiteSpace($content)) {
-                              throw "Secret value for $file is empty. Check the ecommerce-local variable group."
-                            }
-                            # Write without trailing newline
-                            [System.IO.File]::WriteAllText((Join-Path (Get-Location) $file), $content.Trim())
-                            Write-Host "Created: $file"
+                          # ---- MySQL root password ----
+                          $mysqlPwd = $env:MYSQL_ROOT_PASSWORD
+                          if ([string]::IsNullOrWhiteSpace($mysqlPwd)) {
+                              throw "MYSQL_ROOT_PASSWORD is empty. Check the ecommerce-local variable group and that it is marked as secret."
                           }
+                          $mysqlFile = "ecommerce-local_mysql_root_password"
+                          [System.IO.File]::WriteAllText((Join-Path (Get-Location) $mysqlFile), $mysqlPwd.Trim())
+                          Write-Host "Created: $mysqlFile (length: $($mysqlPwd.Length))"
 
-                          # Also support a secrets/ sub-folder (common pattern)
+                          # ---- Mongo root password ----
+                          $mongoPwd = $env:MONGO_ROOT_PASSWORD
+                          if ([string]::IsNullOrWhiteSpace($mongoPwd)) {
+                              throw "MONGO_ROOT_PASSWORD is empty. Check the ecommerce-local variable group and that it is marked as secret."
+                          }
+                          $mongoFile = "ecommerce-local_mongo_root_password"
+                          [System.IO.File]::WriteAllText((Join-Path (Get-Location) $mongoFile), $mongoPwd.Trim())
+                          Write-Host "Created: $mongoFile (length: $($mongoPwd.Length))"
+
+                          # Also create the common ./secrets/ layout (in case compose uses file: ./secrets/...)
                           $secretsDir = Join-Path (Get-Location) "secrets"
                           New-Item -ItemType Directory -Force -Path $secretsDir | Out-Null
-                          [System.IO.File]::WriteAllText((Join-Path $secretsDir "mysql_root_password"), "$(MYSQL_ROOT_PASSWORD)".Trim())
-                          [System.IO.File]::WriteAllText((Join-Path $secretsDir "mongo_root_password"), "$(MONGO_ROOT_PASSWORD)".Trim())
+                          [System.IO.File]::WriteAllText((Join-Path $secretsDir "mysql_root_password"), $mysqlPwd.Trim())
+                          [System.IO.File]::WriteAllText((Join-Path $secretsDir "mongo_root_password"), $mongoPwd.Trim())
                           Write-Host "Also created files under ./secrets/"
+
+                          Write-Host ""
+                          Write-Host "Secret files currently present:"
+                          Get-ChildItem -File | Where-Object { $_.Name -like "*password*" } | Format-Table Name, Length
+                  env:
+                      MYSQL_ROOT_PASSWORD: $(MYSQL_ROOT_PASSWORD)
+                      MONGO_ROOT_PASSWORD: $(MONGO_ROOT_PASSWORD)
 
                 # =================================================
                 # CLEAN PREVIOUS STATE
