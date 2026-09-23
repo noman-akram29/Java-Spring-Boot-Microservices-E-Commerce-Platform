@@ -338,20 +338,24 @@ stages:
                 # Trivy full report
                 # ------------------------------------------------
                 - task: PowerShell@2
-                  displayName: "Trivy full security scan"
+                  displayName: "Trivy security scan and gate"
                   inputs:
                       targetType: inline
                       script: |
                           $ErrorActionPreference = "Stop"
 
                           $imageTag = "$(IMAGE_TAG)".Trim()
+
                           if ([string]::IsNullOrWhiteSpace($imageTag)) {
                               throw "IMAGE_TAG pipeline variable is empty"
                           }
-                          Write-Host "Using IMAGE_TAG = '$imageTag'"
 
                           $reportDir = "$(Build.ArtifactStagingDirectory)/security"
-                          New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
+
+                          New-Item `
+                              -ItemType Directory `
+                              -Force `
+                              -Path $reportDir | Out-Null
 
                           $services = @(
                               "api-gateway",
@@ -361,14 +365,19 @@ stages:
                               "notification-service"
                           )
 
+                          Write-Host "=============================================="
+                          Write-Host "Trivy security scan + HIGH/CRITICAL gate"
+                          Write-Host "=============================================="
+                          Write-Host "Image tag: $imageTag"
+
                           foreach ($service in $services) {
+
                               $image  = "ecommerce/${service}:${imageTag}"
                               $report = "${service}-${imageTag}-trivy.json"
 
                               Write-Host ""
                               Write-Host "=============================================="
-                              Write-Host "Trivy full scan"
-                              Write-Host $image
+                              Write-Host "Scanning: $image"
                               Write-Host "=============================================="
 
                               docker run --rm `
@@ -380,18 +389,28 @@ stages:
                                   --scanners vuln,secret,misconfig `
                                   --format json `
                                   --output "/out/$report" `
+                                  --severity CRITICAL,HIGH `
+                                  --ignore-unfixed `
                                   --ignorefile /src/.trivyignore `
+                                  --exit-code 1 `
                                   --no-progress `
                                   $image
 
-                              if ($LASTEXITCODE -ne 0) {
-                                  throw "Full Trivy report failed for $service."
-                              }
                               if (-not (Test-Path "$reportDir\$report")) {
                                   throw "Trivy report was not created for $service."
                               }
+
+                              if ($LASTEXITCODE -ne 0) {
+                                  throw "Trivy HIGH/CRITICAL security gate failed for $service."
+                              }
+
+                              Write-Host "$service passed Trivy security gate."
                           }
 
+                          Write-Host ""
+                          Write-Host "=============================================="
+                          Write-Host "All images passed Trivy security gate."
+                          Write-Host "=============================================="
                 # ------------------------------------------------
                 # Syft SBOM
                 # ------------------------------------------------
@@ -442,59 +461,6 @@ stages:
                                   throw "Syft SBOM was not created for $service."
                               }
                           }
-
-                # ------------------------------------------------
-                # Trivy HIGH / CRITICAL gate
-                # ------------------------------------------------
-                - task: PowerShell@2
-                  displayName: "Trivy HIGH/CRITICAL gate"
-                  inputs:
-                      targetType: inline
-                      script: |
-                          $ErrorActionPreference = "Stop"
-
-                          $imageTag = "$(IMAGE_TAG)".Trim()
-                          if ([string]::IsNullOrWhiteSpace($imageTag)) {
-                              throw "IMAGE_TAG pipeline variable is empty"
-                          }
-                          Write-Host "Using IMAGE_TAG = '$imageTag'"
-
-                          $services = @(
-                              "api-gateway",
-                              "product-service",
-                              "inventory-service",
-                              "order-service",
-                              "notification-service"
-                          )
-
-                          foreach ($service in $services) {
-                              $image = "ecommerce/${service}:${imageTag}"
-
-                              Write-Host ""
-                              Write-Host "=============================================="
-                              Write-Host "Trivy security gate"
-                              Write-Host $image
-                              Write-Host "=============================================="
-
-                              docker run --rm `
-                                  -v /var/run/docker.sock:/var/run/docker.sock `
-                                  -v "$(Build.SourcesDirectory):/src:ro" `
-                                  "aquasec/trivy:$(TRIVY_VERSION)" `
-                                  image `
-                                  --scanners vuln,secret,misconfig `
-                                  --exit-code 1 `
-                                  --severity CRITICAL,HIGH `
-                                  --ignore-unfixed `
-                                  --ignorefile /src/.trivyignore `
-                                  --no-progress `
-                                  $image
-
-                              if ($LASTEXITCODE -ne 0) {
-                                  throw "Trivy security gate failed for $service."
-                              }
-                              Write-Host "$service passed Trivy."
-                          }
-
                 # ------------------------------------------------
                 # Convert Trivy reports to SARIF
                 # ------------------------------------------------
