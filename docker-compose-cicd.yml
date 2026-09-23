@@ -159,7 +159,7 @@ services:
         environment:
             SERVER_PORT: ${PRODUCT_SERVICE_PORT}
             SPRING_DATA_MONGODB_URI: >-
-                mongodb://${MONGO_PRODUCT_USER}:${MONGO_PRODUCT_PASSWORD}@mongodb:${MONGO_PORT}/${PRODUCT_DATABASE}?authSource=admin
+                mongodb://${MONGO_PRODUCT_USERNAME}:${MONGO_PRODUCT_PASSWORD}@mongodb:${MONGO_PORT}/${PRODUCT_DATABASE}?authSource=admin
             INVENTORY_SERVICE_URL: "http://inventory-service:${INVENTORY_SERVICE_PORT}"
         expose:
             - "${PRODUCT_SERVICE_PORT}"
