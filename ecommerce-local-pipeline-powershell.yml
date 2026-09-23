@@ -18,13 +18,17 @@
 #       ↓
 #   Build Images
 #       ↓
-#   Trivy Full Scan
+#   Verify Images
+#       ↓
+#   Trivy Scan + HIGH/CRITICAL Gate
 #       ↓
 #   Syft SBOM
 #       ↓
-#   Trivy HIGH/CRITICAL Gate
+#   SARIF Conversion
 #       ↓
-#   Verify Exact Images
+#   Publish Security Artifacts
+#       ↓
+#   Prepare Secrets + Clean previous stack
 #       ↓
 #   Docker Compose Deploy
 #       ↓
@@ -32,8 +36,12 @@
 #       ↓
 #   Smoke Tests
 #
-# Images are tagged with the Git commit SHA.
-# No ECR. No AWS. No Kubernetes.
+# Key improvements:
+#   - SERVICES list comes from variable group (single source of truth)
+#   - Temporary secret files created from variable group before deploy
+#   - Previous stack cleaned with down -v
+#   - Secret files removed after deploy
+#   - Explicit --project-name used
 #
 # IMPORTANT:
 # Build / Scan / SBOM / Deploy / Smoke Test run in the
@@ -51,13 +59,10 @@ pr: none
 
 variables:
     - group: ecommerce-local
-
     - name: IMAGE_TAG
       value: $(Build.SourceVersion)
-
     - name: COMPOSE_FILE
       value: docker-compose-cicd.yml
-
     - name: COMPOSE_PROJECT_NAME
       value: ecommerce-local
 
@@ -87,16 +92,14 @@ stages:
                       script: |
                           $ErrorActionPreference = "Stop"
 
-                          $services = @(
-                              "api-gateway",
-                              "product-service",
-                              "inventory-service",
-                              "order-service",
-                              "notification-service"
-                          )
+                          if ([string]::IsNullOrWhiteSpace("$(SERVICES)")) {
+                              throw "Pipeline variable SERVICES is empty. Check the ecommerce-local variable group."
+                          }
+                          $services = "$(SERVICES)".Trim() -split '\s+' | Where-Object { $_ -ne '' }
 
                           Write-Host "=============================================="
                           Write-Host "Running unit tests"
+                          Write-Host "Services : $($services -join ', ')"
                           Write-Host "=============================================="
 
                           foreach ($service in $services) {
@@ -117,7 +120,6 @@ stages:
                                   if (-not (Test-Path ".\mvnw.cmd")) {
                                       throw "mvnw.cmd not found in $service"
                                   }
-
                                   & .\mvnw.cmd -B test
                                   if ($LASTEXITCODE -ne 0) {
                                       throw "Tests failed for $service"
@@ -129,7 +131,9 @@ stages:
                           }
 
                           Write-Host ""
+                          Write-Host "=============================================="
                           Write-Host "All module tests passed."
+                          Write-Host "=============================================="
 
                 - task: PublishTestResults@2
                   displayName: "Publish test results"
@@ -152,39 +156,42 @@ stages:
           - job: BuildSecurityDeploy
             displayName: "Build, secure and deploy local Compose stack"
             steps:
+                # =================================================
+                # CHECKOUT
+                # =================================================
                 - checkout: self
                   clean: true
                   fetchDepth: 1
 
-                # ------------------------------------------------
-                # Verify Docker
-                # ------------------------------------------------
+                # =================================================
+                # VERIFY DOCKER
+                # =================================================
                 - task: PowerShell@2
                   displayName: "Verify Docker and Compose"
                   inputs:
                       targetType: inline
                       script: |
                           $ErrorActionPreference = "Stop"
-
                           Write-Host "=============================================="
                           Write-Host "Docker Environment"
                           Write-Host "=============================================="
-
                           docker version
-                          if ($LASTEXITCODE -ne 0) { throw "Docker is not available." }
-
+                          if ($LASTEXITCODE -ne 0) {
+                              throw "Docker is not available."
+                          }
                           Write-Host ""
                           Write-Host "=== Docker Compose ==="
                           docker compose version
-                          if ($LASTEXITCODE -ne 0) { throw "Docker Compose is not available." }
-
+                          if ($LASTEXITCODE -ne 0) {
+                              throw "Docker Compose is not available."
+                          }
                           Write-Host ""
                           Write-Host "=== Docker Disk Usage ==="
                           docker system df
 
-                # ------------------------------------------------
-                # Validate Compose
-                # ------------------------------------------------
+                # =================================================
+                # VALIDATE COMPOSE
+                # =================================================
                 - task: PowerShell@2
                   displayName: "Validate Docker Compose configuration"
                   inputs:
@@ -192,12 +199,14 @@ stages:
                       script: |
                           $ErrorActionPreference = "Stop"
                           Set-Location "$(Build.SourcesDirectory)"
-
                           Write-Host "Compose file : $(COMPOSE_FILE)"
                           Write-Host "Project      : $(COMPOSE_PROJECT_NAME)"
                           Write-Host "Image tag    : $(IMAGE_TAG)"
-
-                          docker compose -f "$(COMPOSE_FILE)" config --quiet
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              --project-name "$(COMPOSE_PROJECT_NAME)" `
+                              config `
+                              --quiet
                           if ($LASTEXITCODE -ne 0) {
                               throw "Docker Compose configuration validation failed."
                           }
@@ -236,9 +245,9 @@ stages:
                       GATEWAY_AUTH_PASSWORD: $(GATEWAY_AUTH_PASSWORD)
                       GATEWAY_JWT_SECRET: $(GATEWAY_JWT_SECRET)
 
-                # ------------------------------------------------
-                # Build images
-                # ------------------------------------------------
+                # =================================================
+                # BUILD DOCKER IMAGES
+                # =================================================
                 - task: PowerShell@2
                   displayName: "Build Docker images"
                   inputs:
@@ -246,20 +255,23 @@ stages:
                       script: |
                           $ErrorActionPreference = "Stop"
                           Set-Location "$(Build.SourcesDirectory)"
-
                           Write-Host "=============================================="
                           Write-Host "Building application images"
                           Write-Host "=============================================="
                           Write-Host "IMAGE_TAG = $(IMAGE_TAG)"
-
-                          docker compose -f "$(COMPOSE_FILE)" build --pull
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              --project-name "$(COMPOSE_PROJECT_NAME)" `
+                              build
                           if ($LASTEXITCODE -ne 0) {
                               throw "Docker Compose build failed."
                           }
-
                           Write-Host ""
                           Write-Host "=== Built images ==="
-                          docker compose -f "$(COMPOSE_FILE)" images
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              --project-name "$(COMPOSE_PROJECT_NAME)" `
+                              images
                   env:
                       IMAGE_TAG: $(IMAGE_TAG)
                       COMPOSE_PROJECT_NAME: $(COMPOSE_PROJECT_NAME)
@@ -294,30 +306,25 @@ stages:
                       GATEWAY_AUTH_PASSWORD: $(GATEWAY_AUTH_PASSWORD)
                       GATEWAY_JWT_SECRET: $(GATEWAY_JWT_SECRET)
 
-                # ------------------------------------------------
-                # Verify exact images BEFORE scanning
-                # ------------------------------------------------
+                # =================================================
+                # VERIFY EXACT IMAGES BEFORE SCANNING
+                # =================================================
                 - task: PowerShell@2
                   displayName: "Verify built images"
                   inputs:
                       targetType: inline
                       script: |
                           $ErrorActionPreference = "Stop"
-
                           $imageTag = "$(IMAGE_TAG)".Trim()
                           if ([string]::IsNullOrWhiteSpace($imageTag)) {
                               throw "IMAGE_TAG pipeline variable is empty"
                           }
+                          if ([string]::IsNullOrWhiteSpace("$(SERVICES)")) {
+                              throw "Pipeline variable SERVICES is empty. Check the ecommerce-local variable group."
+                          }
+                          $services = "$(SERVICES)".Trim() -split '\s+' | Where-Object { $_ -ne '' }
+
                           Write-Host "Using IMAGE_TAG = '$imageTag'"
-
-                          $services = @(
-                              "api-gateway",
-                              "product-service",
-                              "inventory-service",
-                              "order-service",
-                              "notification-service"
-                          )
-
                           Write-Host "=============================================="
                           Write-Host "Verifying built application images"
                           Write-Host "=============================================="
@@ -326,7 +333,6 @@ stages:
                               $image = "ecommerce/${service}:${imageTag}"
                               Write-Host ""
                               Write-Host "Checking: $image"
-
                               docker image inspect $image > $null 2>&1
                               if ($LASTEXITCODE -ne 0) {
                                   throw "Expected image does not exist: $image"
@@ -334,44 +340,41 @@ stages:
                               Write-Host "OK: $image"
                           }
 
-                # ------------------------------------------------
-                # Trivy full report
-                # ------------------------------------------------
+                # =================================================
+                # TRIVY SECURITY SCAN + HIGH/CRITICAL GATE
+                # =================================================
                 - task: PowerShell@2
                   displayName: "Trivy security scan and gate"
                   inputs:
                       targetType: inline
                       script: |
                           $ErrorActionPreference = "Stop"
-
                           $imageTag = "$(IMAGE_TAG)".Trim()
-
                           if ([string]::IsNullOrWhiteSpace($imageTag)) {
                               throw "IMAGE_TAG pipeline variable is empty"
                           }
+                          if ([string]::IsNullOrWhiteSpace("$(SERVICES)")) {
+                              throw "Pipeline variable SERVICES is empty. Check the ecommerce-local variable group."
+                          }
+                          $services = "$(SERVICES)".Trim() -split '\s+' | Where-Object { $_ -ne '' }
 
-                          $reportDir = "$(Build.ArtifactStagingDirectory)/security"
+                          $reportDir = "$(Build.ArtifactStagingDirectory)\security"
+                          New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
 
-                          New-Item `
-                              -ItemType Directory `
-                              -Force `
-                              -Path $reportDir | Out-Null
+                          $trivyCache = "$(Agent.TempDirectory)\trivy-cache"
+                          New-Item -ItemType Directory -Force -Path $trivyCache | Out-Null
 
-                          $services = @(
-                              "api-gateway",
-                              "product-service",
-                              "inventory-service",
-                              "order-service",
-                              "notification-service"
-                          )
+                          $securityFailed = $false
 
                           Write-Host "=============================================="
-                          Write-Host "Trivy security scan + HIGH/CRITICAL gate"
+                          Write-Host "Trivy Security Scan + Gate"
                           Write-Host "=============================================="
-                          Write-Host "Image tag: $imageTag"
+                          Write-Host "Image tag : $imageTag"
+                          Write-Host "Report dir: $reportDir"
+                          Write-Host "Cache dir : $trivyCache"
+                          Write-Host "Services  : $($services -join ', ')"
 
                           foreach ($service in $services) {
-
                               $image  = "ecommerce/${service}:${imageTag}"
                               $report = "${service}-${imageTag}-trivy.json"
 
@@ -382,6 +385,7 @@ stages:
 
                               docker run --rm `
                                   -v /var/run/docker.sock:/var/run/docker.sock `
+                                  -v "${trivyCache}:/root/.cache/trivy" `
                                   -v "${reportDir}:/out" `
                                   -v "$(Build.SourcesDirectory):/src:ro" `
                                   "aquasec/trivy:$(TRIVY_VERSION)" `
@@ -396,52 +400,62 @@ stages:
                                   --no-progress `
                                   $image
 
+                              $trivyExitCode = $LASTEXITCODE
+
                               if (-not (Test-Path "$reportDir\$report")) {
+                                  Write-Host "##vso[task.logissue type=error]Trivy report was not created for $service."
                                   throw "Trivy report was not created for $service."
                               }
 
-                              if ($LASTEXITCODE -ne 0) {
-                                  throw "Trivy HIGH/CRITICAL security gate failed for $service."
+                              if ($trivyExitCode -ne 0) {
+                                  Write-Host ""
+                                  Write-Host "##vso[task.logissue type=error]$service failed the Trivy HIGH/CRITICAL security gate."
+                                  $securityFailed = $true
                               }
-
-                              Write-Host "$service passed Trivy security gate."
+                              else {
+                                  Write-Host ""
+                                  Write-Host "$service passed Trivy security gate."
+                              }
                           }
 
                           Write-Host ""
                           Write-Host "=============================================="
-                          Write-Host "All images passed Trivy security gate."
+                          Write-Host "Trivy scan summary"
                           Write-Host "=============================================="
-                # ------------------------------------------------
-                # Syft SBOM
-                # ------------------------------------------------
+                          if ($securityFailed) {
+                              Write-Host "##vso[task.logissue type=error]One or more images failed the Trivy HIGH/CRITICAL security gate."
+                              throw "Trivy security gate failed."
+                          }
+                          Write-Host "All images passed Trivy security gate."
+
+                # =================================================
+                # SYFT SBOM
+                # =================================================
                 - task: PowerShell@2
                   displayName: "Generate Syft SBOMs"
                   inputs:
                       targetType: inline
                       script: |
                           $ErrorActionPreference = "Stop"
-
                           $imageTag = "$(IMAGE_TAG)".Trim()
                           if ([string]::IsNullOrWhiteSpace($imageTag)) {
                               throw "IMAGE_TAG pipeline variable is empty"
                           }
-                          Write-Host "Using IMAGE_TAG = '$imageTag'"
+                          if ([string]::IsNullOrWhiteSpace("$(SERVICES)")) {
+                              throw "Pipeline variable SERVICES is empty. Check the ecommerce-local variable group."
+                          }
+                          $services = "$(SERVICES)".Trim() -split '\s+' | Where-Object { $_ -ne '' }
 
-                          $reportDir = "$(Build.ArtifactStagingDirectory)/security"
+                          $reportDir = "$(Build.ArtifactStagingDirectory)\security"
                           New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
-
-                          $services = @(
-                              "api-gateway",
-                              "product-service",
-                              "inventory-service",
-                              "order-service",
-                              "notification-service"
-                          )
 
                           foreach ($service in $services) {
                               $image = "ecommerce/${service}:${imageTag}"
                               Write-Host ""
-                              Write-Host "Generating SBOM for $image"
+                              Write-Host "=============================================="
+                              Write-Host "Generating SBOM"
+                              Write-Host $image
+                              Write-Host "=============================================="
 
                               docker run --rm `
                                   -v /var/run/docker.sock:/var/run/docker.sock `
@@ -460,10 +474,12 @@ stages:
                               if (-not (Test-Path "$reportDir\${service}-${imageTag}.syft.json")) {
                                   throw "Syft SBOM was not created for $service."
                               }
+                              Write-Host "SBOM generated successfully for $service."
                           }
-                # ------------------------------------------------
-                # Convert Trivy reports to SARIF
-                # ------------------------------------------------
+
+                # =================================================
+                # CONVERT TRIVY REPORTS TO SARIF
+                # =================================================
                 - task: PowerShell@2
                   displayName: "Convert Trivy reports to SARIF"
                   condition: succeededOrFailed()
@@ -471,29 +487,28 @@ stages:
                       targetType: inline
                       script: |
                           $ErrorActionPreference = "Stop"
-
                           $imageTag = "$(IMAGE_TAG)".Trim()
                           if ([string]::IsNullOrWhiteSpace($imageTag)) {
                               throw "IMAGE_TAG pipeline variable is empty"
                           }
+                          if ([string]::IsNullOrWhiteSpace("$(SERVICES)")) {
+                              throw "Pipeline variable SERVICES is empty. Check the ecommerce-local variable group."
+                          }
+                          $services = "$(SERVICES)".Trim() -split '\s+' | Where-Object { $_ -ne '' }
 
-                          $reportDir = "$(Build.ArtifactStagingDirectory)/security"
-
-                          $services = @(
-                              "api-gateway",
-                              "product-service",
-                              "inventory-service",
-                              "order-service",
-                              "notification-service"
-                          )
+                          $reportDir = "$(Build.ArtifactStagingDirectory)\security"
 
                           foreach ($service in $services) {
                               $jsonFile  = "$reportDir\${service}-${imageTag}-trivy.json"
                               $sarifFile = "${service}-${imageTag}-trivy.sarif"
 
                               if (-not (Test-Path $jsonFile)) {
-                                  throw "Missing Trivy report: $jsonFile"
+                                  Write-Host "WARNING: Missing Trivy report: $jsonFile"
+                                  continue
                               }
+
+                              Write-Host ""
+                              Write-Host "Converting Trivy report for $service"
 
                               docker run --rm `
                                   -v "${reportDir}:/out" `
@@ -511,9 +526,9 @@ stages:
                               }
                           }
 
-                # ------------------------------------------------
-                # Publish security artifacts
-                # ------------------------------------------------
+                # =================================================
+                # PUBLISH SECURITY ARTIFACTS
+                # =================================================
                 - task: PublishPipelineArtifact@1
                   displayName: "Publish security artifacts"
                   condition: succeededOrFailed()
@@ -523,7 +538,59 @@ stages:
                       publishLocation: pipeline
 
                 # =================================================
-                # DEPLOY
+                # PREPARE SECRET FILES (from Variable Group)
+                # =================================================
+                - task: PowerShell@2
+                  displayName: "Prepare Docker Compose secret files"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          $ErrorActionPreference = "Stop"
+                          Set-Location "$(Build.SourcesDirectory)"
+
+                          # Compose looks for these exact names when project = ecommerce-local
+                          $secretFiles = @{
+                            "ecommerce-local_mysql_root_password" = "$(MYSQL_ROOT_PASSWORD)"
+                            "ecommerce-local_mongo_root_password" = "$(MONGO_ROOT_PASSWORD)"
+                          }
+
+                          Write-Host "Creating temporary secret files..."
+                          foreach ($file in $secretFiles.Keys) {
+                            $content = $secretFiles[$file]
+                            if ([string]::IsNullOrWhiteSpace($content)) {
+                              throw "Secret value for $file is empty. Check the ecommerce-local variable group."
+                            }
+                            # Write without trailing newline
+                            [System.IO.File]::WriteAllText((Join-Path (Get-Location) $file), $content.Trim())
+                            Write-Host "Created: $file"
+                          }
+
+                          # Also support a secrets/ sub-folder (common pattern)
+                          $secretsDir = Join-Path (Get-Location) "secrets"
+                          New-Item -ItemType Directory -Force -Path $secretsDir | Out-Null
+                          [System.IO.File]::WriteAllText((Join-Path $secretsDir "mysql_root_password"), "$(MYSQL_ROOT_PASSWORD)".Trim())
+                          [System.IO.File]::WriteAllText((Join-Path $secretsDir "mongo_root_password"), "$(MONGO_ROOT_PASSWORD)".Trim())
+                          Write-Host "Also created files under ./secrets/"
+
+                # =================================================
+                # CLEAN PREVIOUS STATE
+                # =================================================
+                - task: PowerShell@2
+                  displayName: "Clean previous Compose stack"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          $ErrorActionPreference = "Continue"
+                          Set-Location "$(Build.SourcesDirectory)"
+                          Write-Host "Removing previous stack and volumes (safe for CI)..."
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              --project-name "$(COMPOSE_PROJECT_NAME)" `
+                              down -v --remove-orphans 2>$null
+                          Write-Host "Cleanup finished."
+
+                # =================================================
+                # VERIFY EXACT IMAGES BEFORE DEPLOYMENT
                 # =================================================
                 - task: PowerShell@2
                   displayName: "Verify exact images before deployment"
@@ -531,21 +598,16 @@ stages:
                       targetType: inline
                       script: |
                           $ErrorActionPreference = "Stop"
-
                           $imageTag = "$(IMAGE_TAG)".Trim()
                           if ([string]::IsNullOrWhiteSpace($imageTag)) {
                               throw "IMAGE_TAG pipeline variable is empty"
                           }
+                          if ([string]::IsNullOrWhiteSpace("$(SERVICES)")) {
+                              throw "Pipeline variable SERVICES is empty. Check the ecommerce-local variable group."
+                          }
+                          $services = "$(SERVICES)".Trim() -split '\s+' | Where-Object { $_ -ne '' }
+
                           Write-Host "Using IMAGE_TAG = '$imageTag'"
-
-                          $services = @(
-                              "api-gateway",
-                              "product-service",
-                              "inventory-service",
-                              "order-service",
-                              "notification-service"
-                          )
-
                           Write-Host "=============================================="
                           Write-Host "Pre-deployment image verification"
                           Write-Host "=============================================="
@@ -553,7 +615,6 @@ stages:
                           foreach ($service in $services) {
                               $expected = "ecommerce/${service}:${imageTag}"
                               Write-Host "Checking $expected"
-
                               docker image inspect $expected > $null 2>&1
                               if ($LASTEXITCODE -ne 0) {
                                   throw "Scanned image is missing: $expected"
@@ -561,6 +622,9 @@ stages:
                               Write-Host "Verified: $expected"
                           }
 
+                # =================================================
+                # DOCKER COMPOSE DEPLOY
+                # =================================================
                 - task: PowerShell@2
                   displayName: "Deploy scanned images"
                   inputs:
@@ -581,6 +645,7 @@ stages:
                           # --no-build guarantees we use the already-scanned images
                           docker compose `
                               -f "$(COMPOSE_FILE)" `
+                              --project-name "$(COMPOSE_PROJECT_NAME)" `
                               up `
                               --detach `
                               --no-build `
@@ -594,7 +659,10 @@ stages:
 
                           Write-Host ""
                           Write-Host "=== Compose status ==="
-                          docker compose -f "$(COMPOSE_FILE)" ps
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              --project-name "$(COMPOSE_PROJECT_NAME)" `
+                              ps
                   env:
                       IMAGE_TAG: $(IMAGE_TAG)
                       COMPOSE_PROJECT_NAME: $(COMPOSE_PROJECT_NAME)
@@ -630,7 +698,34 @@ stages:
                       GATEWAY_JWT_SECRET: $(GATEWAY_JWT_SECRET)
 
                 # =================================================
-                # SMOKE TESTS
+                # REMOVE TEMPORARY SECRET FILES
+                # =================================================
+                - task: PowerShell@2
+                  displayName: "Remove temporary secret files"
+                  condition: always()
+                  inputs:
+                      targetType: inline
+                      script: |
+                          $ErrorActionPreference = "Continue"
+                          Set-Location "$(Build.SourcesDirectory)"
+
+                          $files = @(
+                            "ecommerce-local_mysql_root_password",
+                            "ecommerce-local_mongo_root_password"
+                          )
+                          foreach ($f in $files) {
+                            if (Test-Path $f) {
+                              Remove-Item $f -Force
+                              Write-Host "Removed $f"
+                            }
+                          }
+                          if (Test-Path "secrets") {
+                            Remove-Item "secrets" -Recurse -Force
+                            Write-Host "Removed secrets/ directory"
+                          }
+
+                # =================================================
+                # SMOKE TEST – API GATEWAY
                 # =================================================
                 - task: PowerShell@2
                   displayName: "API Gateway health"
@@ -640,13 +735,18 @@ stages:
                           $ErrorActionPreference = "Stop"
                           $url = "http://localhost:$(API_GATEWAY_PORT)/actuator/health"
                           Write-Host "Checking $url"
-
-                          $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 30
+                          $response = Invoke-WebRequest `
+                              -Uri $url `
+                              -UseBasicParsing `
+                              -TimeoutSec 30
                           if ($response.StatusCode -ne 200) {
                               throw "API Gateway health returned HTTP $($response.StatusCode)."
                           }
                           Write-Host "API Gateway is healthy."
 
+                # =================================================
+                # SMOKE TEST – MAILPIT
+                # =================================================
                 - task: PowerShell@2
                   displayName: "Mailpit readiness"
                   inputs:
@@ -655,13 +755,18 @@ stages:
                           $ErrorActionPreference = "Stop"
                           $url = "http://localhost:$(MAILPIT_UI_PORT)/readyz"
                           Write-Host "Checking $url"
-
-                          $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 30
+                          $response = Invoke-WebRequest `
+                              -Uri $url `
+                              -UseBasicParsing `
+                              -TimeoutSec 30
                           if ($response.StatusCode -ne 200) {
                               throw "Mailpit readiness returned HTTP $($response.StatusCode)."
                           }
                           Write-Host "Mailpit is ready."
 
+                # =================================================
+                # VERIFY COMPOSE DEPLOYMENT
+                # =================================================
                 - task: PowerShell@2
                   displayName: "Verify Compose deployment"
                   inputs:
@@ -669,38 +774,38 @@ stages:
                       script: |
                           $ErrorActionPreference = "Stop"
                           Set-Location "$(Build.SourcesDirectory)"
-
                           $imageTag = "$(IMAGE_TAG)".Trim()
                           if ([string]::IsNullOrWhiteSpace($imageTag)) {
                               throw "IMAGE_TAG pipeline variable is empty"
                           }
+                          if ([string]::IsNullOrWhiteSpace("$(SERVICES)")) {
+                              throw "Pipeline variable SERVICES is empty. Check the ecommerce-local variable group."
+                          }
+                          $services = "$(SERVICES)".Trim() -split '\s+' | Where-Object { $_ -ne '' }
 
                           Write-Host "=== Compose services ==="
-                          docker compose -f "$(COMPOSE_FILE)" ps
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              --project-name "$(COMPOSE_PROJECT_NAME)" `
+                              ps
                           if ($LASTEXITCODE -ne 0) {
                               throw "Unable to retrieve Compose service status."
                           }
 
                           Write-Host ""
                           Write-Host "=== Compose images ==="
-                          docker compose -f "$(COMPOSE_FILE)" images
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              --project-name "$(COMPOSE_PROJECT_NAME)" `
+                              images
 
                           Write-Host ""
                           Write-Host "Expected Git SHA: $imageTag"
-
-                          $services = @(
-                              "api-gateway",
-                              "product-service",
-                              "inventory-service",
-                              "order-service",
-                              "notification-service"
-                          )
 
                           foreach ($service in $services) {
                               $expected = "ecommerce/${service}:${imageTag}"
                               Write-Host ""
                               Write-Host "Checking $expected"
-
                               docker image inspect $expected > $null 2>&1
                               if ($LASTEXITCODE -ne 0) {
                                   throw "Expected image does not exist: $expected"
@@ -708,13 +813,15 @@ stages:
                               Write-Host "OK: $expected"
                           }
 
+                # =================================================
+                # JWT AUTHENTICATION SMOKE TEST
+                # =================================================
                 - task: PowerShell@2
                   displayName: "JWT authentication smoke test"
                   inputs:
                       targetType: inline
                       script: |
                           $ErrorActionPreference = "Stop"
-
                           $baseUrl  = "http://localhost:$(API_GATEWAY_PORT)"
                           $loginUrl = "$baseUrl/auth/login"
 
@@ -741,7 +848,6 @@ stages:
                               throw "JWT login returned an empty response."
                           }
 
-                          # Matches the unit test expectation (accessToken)
                           $token = $loginResponse.accessToken
                           if ([string]::IsNullOrWhiteSpace($token)) {
                               throw "JWT accessToken was not returned by /auth/login."
@@ -749,11 +855,12 @@ stages:
 
                           Write-Host "JWT authentication succeeded."
 
-                          # Protected endpoint – adjust if your path is different
                           $protectedUrl = "$baseUrl/api/inventory/health"
                           Write-Host "Testing protected endpoint: $protectedUrl"
 
-                          $headers = @{ Authorization = "Bearer $token" }
+                          $headers = @{
+                              Authorization = "Bearer $token"
+                          }
 
                           $protectedResponse = Invoke-WebRequest `
                               -Uri $protectedUrl `
@@ -765,8 +872,12 @@ stages:
                           if ($protectedResponse.StatusCode -ne 200) {
                               throw "Protected API returned HTTP $($protectedResponse.StatusCode)."
                           }
+
                           Write-Host "Protected API authentication succeeded."
 
+                # =================================================
+                # DEPLOYMENT SUMMARY
+                # =================================================
                 - task: PowerShell@2
                   displayName: "Deployment summary"
                   inputs:
@@ -809,23 +920,37 @@ stages:
 
                           Write-Host ""
                           Write-Host "=== Compose Configuration ==="
-                          docker compose -f "$(COMPOSE_FILE)" config
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              --project-name "$(COMPOSE_PROJECT_NAME)" `
+                              config
 
                           Write-Host ""
                           Write-Host "=== Compose Status ==="
-                          docker compose -f "$(COMPOSE_FILE)" ps -a
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              --project-name "$(COMPOSE_PROJECT_NAME)" `
+                              ps -a
 
                           Write-Host ""
                           Write-Host "=== Compose Images ==="
-                          docker compose -f "$(COMPOSE_FILE)" images
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              --project-name "$(COMPOSE_PROJECT_NAME)" `
+                              images
 
                           Write-Host ""
                           Write-Host "=== Container Logs ==="
-                          docker compose -f "$(COMPOSE_FILE)" logs --no-color --tail 200
+                          docker compose `
+                              -f "$(COMPOSE_FILE)" `
+                              --project-name "$(COMPOSE_PROJECT_NAME)" `
+                              logs `
+                              --no-color `
+                              --tail 200
 
-                # ------------------------------------------------
-                # Cleanup (dangling images only)
-                # ------------------------------------------------
+                # =================================================
+                # CLEANUP (dangling images only)
+                # =================================================
                 - task: PowerShell@2
                   displayName: "Docker cleanup"
                   condition: always()
@@ -833,13 +958,10 @@ stages:
                       targetType: inline
                       script: |
                           $ErrorActionPreference = "Continue"
-
                           Write-Host "=============================================="
                           Write-Host "Docker cleanup"
                           Write-Host "=============================================="
-
                           docker image prune -f
-
                           Write-Host ""
                           Write-Host "Docker disk usage after cleanup:"
                           docker system df
