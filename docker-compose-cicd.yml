@@ -14,7 +14,7 @@ x-healthcheck: &default-healthcheck
     interval: 10s
     timeout: 5s
     retries: 10
-    start_period: 20s
+    start_period: 40s
 
 services:
     mongodb:
@@ -23,12 +23,10 @@ services:
         healthcheck:
             <<: *default-healthcheck
             test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-            retries: 5
-        secrets:
-            - mongo_root_password
+            retries: 10
         environment:
             MONGO_INITDB_ROOT_USERNAME: "${MONGO_ROOT_USERNAME}"
-            MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
+            MONGO_INITDB_ROOT_PASSWORD: "${MONGO_ROOT_PASSWORD}"
             MONGO_PRODUCT_PASSWORD: "${MONGO_PRODUCT_PASSWORD}"
         expose:
             - "${MONGO_PORT}"
@@ -55,12 +53,12 @@ services:
             test:
                 [
                     "CMD-SHELL",
-                    'mysqladmin ping -h localhost -u root -p"$$(cat /run/secrets/mysql_root_password)"',
+                    'mysqladmin ping -h localhost -u root -p"$$MYSQL_ROOT_PASSWORD"',
                 ]
-        secrets:
-            - mysql_root_password
+            retries: 15
+            start_period: 60s
         environment:
-            MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+            MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
             MYSQL_INVENTORY_PASSWORD: "${MYSQL_INVENTORY_PASSWORD}"
             MYSQL_ORDER_PASSWORD: "${MYSQL_ORDER_PASSWORD}"
         expose:
@@ -83,7 +81,6 @@ services:
     kafka:
         <<: *common
         image: apache/kafka:3.9.0
-
         environment:
             KAFKA_NODE_ID: "${KAFKA_NODE_ID}"
             KAFKA_PROCESS_ROLES: "${KAFKA_PROCESS_ROLES}"
@@ -97,7 +94,6 @@ services:
             KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
             KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
             CLUSTER_ID: "${KAFKA_CLUSTER_ID}"
-
         expose:
             - "${KAFKA_PORT}"
         volumes:
@@ -123,7 +119,6 @@ services:
     mailpit:
         <<: *common
         image: axllent/mailpit:v1.31
-
         healthcheck:
             <<: *default-healthcheck
             test:
@@ -134,7 +129,6 @@ services:
                     "-q",
                     "http://localhost:8025/readyz",
                 ]
-
         ports:
             - "${MAILPIT_UI_PORT}:8025"
             - "${MAILPIT_SMTP_PORT}:1025"
@@ -332,10 +326,3 @@ volumes:
 networks:
     ecommerce-network:
         driver: bridge
-
-secrets:
-    mysql_root_password:
-        file: ./secrets/mysql_root_password.txt
-
-    mongo_root_password:
-        file: ./secrets/mysql_root_password.txt

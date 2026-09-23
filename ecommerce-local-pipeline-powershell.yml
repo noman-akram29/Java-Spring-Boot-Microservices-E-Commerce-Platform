@@ -28,7 +28,7 @@
 #       ↓
 #   Publish Security Artifacts
 #       ↓
-#   Prepare Secrets + Clean previous stack
+#   Clean previous stack
 #       ↓
 #   Docker Compose Deploy
 #       ↓
@@ -38,9 +38,8 @@
 #
 # Key improvements:
 #   - SERVICES list comes from variable group (single source of truth)
-#   - Temporary secret files created from variable group before deploy
+#   - Uses environment variables (no secret files needed)
 #   - Previous stack cleaned with down -v
-#   - Secret files removed after deploy
 #   - Explicit --project-name used
 #
 # IMPORTANT:
@@ -538,52 +537,6 @@ stages:
                       publishLocation: pipeline
 
                 # =================================================
-                # PREPARE SECRET FILES (from Variable Group)
-                # =================================================
-                - task: PowerShell@2
-                  displayName: "Prepare Docker Compose secret files"
-                  inputs:
-                      targetType: inline
-                      script: |
-                          $ErrorActionPreference = "Stop"
-                          Set-Location "$(Build.SourcesDirectory)"
-
-                          Write-Host "Working directory: $(Get-Location)"
-                          Write-Host "Creating temporary secret files for Compose..."
-
-                          # ---- MySQL root password ----
-                          $mysqlPwd = $env:MYSQL_ROOT_PASSWORD
-                          if ([string]::IsNullOrWhiteSpace($mysqlPwd)) {
-                              throw "MYSQL_ROOT_PASSWORD is empty. Check the ecommerce-local variable group and that it is marked as secret."
-                          }
-                          $mysqlFile = "ecommerce-local_mysql_root_password"
-                          [System.IO.File]::WriteAllText((Join-Path (Get-Location) $mysqlFile), $mysqlPwd.Trim())
-                          Write-Host "Created: $mysqlFile (length: $($mysqlPwd.Length))"
-
-                          # ---- Mongo root password ----
-                          $mongoPwd = $env:MONGO_ROOT_PASSWORD
-                          if ([string]::IsNullOrWhiteSpace($mongoPwd)) {
-                              throw "MONGO_ROOT_PASSWORD is empty. Check the ecommerce-local variable group and that it is marked as secret."
-                          }
-                          $mongoFile = "ecommerce-local_mongo_root_password"
-                          [System.IO.File]::WriteAllText((Join-Path (Get-Location) $mongoFile), $mongoPwd.Trim())
-                          Write-Host "Created: $mongoFile (length: $($mongoPwd.Length))"
-
-                          # Also create the common ./secrets/ layout (in case compose uses file: ./secrets/...)
-                          $secretsDir = Join-Path (Get-Location) "secrets"
-                          New-Item -ItemType Directory -Force -Path $secretsDir | Out-Null
-                          [System.IO.File]::WriteAllText((Join-Path $secretsDir "mysql_root_password"), $mysqlPwd.Trim())
-                          [System.IO.File]::WriteAllText((Join-Path $secretsDir "mongo_root_password"), $mongoPwd.Trim())
-                          Write-Host "Also created files under ./secrets/"
-
-                          Write-Host ""
-                          Write-Host "Secret files currently present:"
-                          Get-ChildItem -File | Where-Object { $_.Name -like "*password*" } | Format-Table Name, Length
-                  env:
-                      MYSQL_ROOT_PASSWORD: $(MYSQL_ROOT_PASSWORD)
-                      MONGO_ROOT_PASSWORD: $(MONGO_ROOT_PASSWORD)
-
-                # =================================================
                 # CLEAN PREVIOUS STATE
                 # =================================================
                 - task: PowerShell@2
@@ -707,33 +660,6 @@ stages:
                       GATEWAY_AUTH_USERNAME: $(GATEWAY_AUTH_USERNAME)
                       GATEWAY_AUTH_PASSWORD: $(GATEWAY_AUTH_PASSWORD)
                       GATEWAY_JWT_SECRET: $(GATEWAY_JWT_SECRET)
-
-                # =================================================
-                # REMOVE TEMPORARY SECRET FILES
-                # =================================================
-                - task: PowerShell@2
-                  displayName: "Remove temporary secret files"
-                  condition: always()
-                  inputs:
-                      targetType: inline
-                      script: |
-                          $ErrorActionPreference = "Continue"
-                          Set-Location "$(Build.SourcesDirectory)"
-
-                          $files = @(
-                            "ecommerce-local_mysql_root_password",
-                            "ecommerce-local_mongo_root_password"
-                          )
-                          foreach ($f in $files) {
-                            if (Test-Path $f) {
-                              Remove-Item $f -Force
-                              Write-Host "Removed $f"
-                            }
-                          }
-                          if (Test-Path "secrets") {
-                            Remove-Item "secrets" -Recurse -Force
-                            Write-Host "Removed secrets/ directory"
-                          }
 
                 # =================================================
                 # SMOKE TEST – API GATEWAY
