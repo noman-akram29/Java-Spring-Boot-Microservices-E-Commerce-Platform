@@ -553,7 +553,7 @@ stages:
                   condition: succeededOrFailed()
                   inputs:
                       targetPath: "$(Build.ArtifactStagingDirectory)/security"
-                      artifact: "local-security-$(Build.BuildId)"
+                      artifact: "local-security-$(Build.BuildId)-attempt-$(System.JobAttempt)"
                       publishLocation: pipeline
 
                 # =================================================
