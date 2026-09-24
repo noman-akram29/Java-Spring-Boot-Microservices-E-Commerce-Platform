@@ -1,0 +1,1068 @@
+# ============================================================
+# ecommerce-local-pipeline-bash.yml
+#
+# Local CI/CD – Bash / Linux agent version
+#
+# Agent:
+#   Pool  : e-commerce-pool
+#   Agent : Linux agent (must match LINUX_AGENT in variable group)
+#
+# Target:
+#   Local Docker Engine
+#
+# Compose:
+#   docker-compose-cicd.yml
+#
+# Flow:
+#   Unit Tests
+#       ↓
+#   Build Images
+#       ↓
+#   Verify Images
+#       ↓
+#   Trivy Scan + HIGH/CRITICAL Gate
+#       ↓
+#   Syft SBOM
+#       ↓
+#   SARIF Conversion
+#       ↓
+#   Publish Security Artifacts
+#       ↓
+#   Clean previous stack
+#       ↓
+#   Docker Compose Deploy
+#       ↓
+#   Health Checks
+#       ↓
+#   Smoke Tests
+#
+# IMPORTANT:
+# Build / Scan / SBOM / Deploy / Smoke Test run in the
+# SAME JOB so Docker images remain available on the same
+# Docker daemon.
+# ============================================================
+
+trigger:
+    branches:
+        include:
+            - feature/cicd
+            - staging
+
+pr: none
+
+variables:
+    - group: ecommerce-local
+
+    - name: IMAGE_TAG
+      value: $(Build.SourceVersion)
+
+    - name: COMPOSE_FILE
+      value: docker-compose-cicd.yml
+
+    - name: COMPOSE_PROJECT_NAME
+      value: ecommerce-local
+
+pool:
+    name: $(AGENT_POOL)
+    demands:
+        - Agent.Name -equals $(LINUX_AGENT)
+
+stages:
+    # ============================================================
+    # STAGE 1 – UNIT TESTS
+    # ============================================================
+    - stage: Test
+      displayName: "Unit Tests"
+
+      jobs:
+          - job: UnitTests
+            displayName: "Run Maven unit tests"
+
+            steps:
+                - checkout: self
+                  clean: true
+                  fetchDepth: 1
+
+                # ==================================================
+                # VERIFY JAVA / MAVEN / DOCKER
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Verify Java, Maven and Docker"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          echo "=============================================="
+                          echo "Build Environment"
+                          echo "=============================================="
+
+                          echo ""
+                          echo "=== Java ==="
+                          java -version
+
+                          echo ""
+                          echo "=== Maven ==="
+                          mvn -version
+
+                          echo ""
+                          echo "=== Docker ==="
+                          docker version
+
+                          echo ""
+                          echo "=== Docker Compose ==="
+                          docker compose version
+
+                          echo ""
+                          echo "Build environment verified."
+
+                # ==================================================
+                # RUN TESTS
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Run unit tests"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          if [[ -z "${SERVICES:-}" ]]; then
+                            echo "ERROR: Pipeline variable SERVICES is empty."
+                            echo "Check the ecommerce-local variable group."
+                            exit 1
+                          fi
+
+                          read -ra services <<< "$SERVICES"
+
+                          echo "=============================================="
+                          echo "Running unit tests"
+                          echo "Services : ${services[*]}"
+                          echo "=============================================="
+
+                          for service in "${services[@]}"; do
+                            service_path="$(Build.SourcesDirectory)/$service"
+                            pom_path="$service_path/pom.xml"
+
+                            if [[ ! -f "$pom_path" ]]; then
+                              echo "ERROR: pom.xml not found for $service"
+                              exit 1
+                            fi
+
+                            echo ""
+                            echo "----------------------------------------------"
+                            echo "Testing: $service"
+                            echo "----------------------------------------------"
+
+                            cd "$service_path"
+
+                            if [[ ! -x "./mvnw" ]]; then
+                              echo "ERROR: mvnw not found or not executable in $service"
+                              exit 1
+                            fi
+
+                            ./mvnw -B test
+                          done
+
+                          echo ""
+                          echo "=============================================="
+                          echo "All module tests passed."
+                          echo "=============================================="
+
+                - task: PublishTestResults@2
+                  displayName: "Publish test results"
+                  condition: succeededOrFailed()
+                  inputs:
+                      testResultsFormat: "JUnit"
+                      testResultsFiles: "**/target/surefire-reports/TEST-*.xml"
+                      mergeTestResults: true
+                      failTaskOnFailedTests: true
+                      testRunTitle: "E-Commerce Local CI"
+
+    # ============================================================
+    # STAGE 2 – BUILD + SECURITY + SBOM + DEPLOY + SMOKE
+    # ============================================================
+    - stage: BuildSecurityDeploy
+      displayName: "Build, Scan, SBOM, Deploy & Smoke Test"
+
+      dependsOn: Test
+      condition: succeeded()
+
+      jobs:
+          - job: BuildSecurityDeploy
+            displayName: "Build, secure and deploy local Compose stack"
+
+            steps:
+                # ==================================================
+                # CHECKOUT
+                # ==================================================
+                - checkout: self
+                  clean: true
+                  fetchDepth: 1
+
+                # ==================================================
+                # VERIFY DOCKER
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Verify Docker and Compose"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          echo "=============================================="
+                          echo "Docker Environment"
+                          echo "=============================================="
+
+                          echo ""
+                          echo "=== Docker Version ==="
+                          docker version
+
+                          echo ""
+                          echo "=== Docker Compose ==="
+                          docker compose version
+
+                          echo ""
+                          echo "=== Docker Disk Usage ==="
+                          docker system df
+
+                # ==================================================
+                # VALIDATE COMPOSE
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Validate Docker Compose configuration"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          cd "$(Build.SourcesDirectory)"
+
+                          echo "Compose file : $(COMPOSE_FILE)"
+                          echo "Project      : $(COMPOSE_PROJECT_NAME)"
+                          echo "Image tag    : $(IMAGE_TAG)"
+
+                          docker compose \
+                            -f "$(COMPOSE_FILE)" \
+                            --project-name "$(COMPOSE_PROJECT_NAME)" \
+                            config \
+                            --quiet
+
+                          echo "Compose configuration is valid."
+
+                  env:
+                      IMAGE_TAG: $(IMAGE_TAG)
+                      COMPOSE_PROJECT_NAME: $(COMPOSE_PROJECT_NAME)
+
+                      API_GATEWAY_PORT: $(API_GATEWAY_PORT)
+                      PRODUCT_SERVICE_PORT: $(PRODUCT_SERVICE_PORT)
+                      INVENTORY_SERVICE_PORT: $(INVENTORY_SERVICE_PORT)
+                      ORDER_SERVICE_PORT: $(ORDER_SERVICE_PORT)
+                      NOTIFICATION_SERVICE_PORT: $(NOTIFICATION_SERVICE_PORT)
+
+                      MONGO_PORT: $(MONGO_PORT)
+                      MONGO_ROOT_USERNAME: $(MONGO_ROOT_USERNAME)
+                      MONGO_ROOT_PASSWORD: $(MONGO_ROOT_PASSWORD)
+                      MONGO_PRODUCT_USERNAME: $(MONGO_PRODUCT_USERNAME)
+                      MONGO_PRODUCT_PASSWORD: $(MONGO_PRODUCT_PASSWORD)
+                      PRODUCT_DATABASE: $(PRODUCT_DATABASE)
+
+                      MYSQL_PORT: $(MYSQL_PORT)
+                      MYSQL_ROOT_PASSWORD: $(MYSQL_ROOT_PASSWORD)
+                      MYSQL_INVENTORY_USERNAME: $(MYSQL_INVENTORY_USERNAME)
+                      MYSQL_INVENTORY_PASSWORD: $(MYSQL_INVENTORY_PASSWORD)
+                      MYSQL_ORDER_USERNAME: $(MYSQL_ORDER_USERNAME)
+                      MYSQL_ORDER_PASSWORD: $(MYSQL_ORDER_PASSWORD)
+                      INVENTORY_DATABASE: $(INVENTORY_DATABASE)
+                      ORDER_DATABASE: $(ORDER_DATABASE)
+
+                      KAFKA_CLUSTER_ID: $(KAFKA_CLUSTER_ID)
+                      KAFKA_NODE_ID: $(KAFKA_NODE_ID)
+                      KAFKA_PROCESS_ROLES: $(KAFKA_PROCESS_ROLES)
+                      KAFKA_CONTROLLER_QUORUM_VOTERS: $(KAFKA_CONTROLLER_QUORUM_VOTERS)
+                      KAFKA_PORT: $(KAFKA_PORT)
+
+                      MAILPIT_UI_PORT: $(MAILPIT_UI_PORT)
+                      MAILPIT_SMTP_PORT: $(MAILPIT_SMTP_PORT)
+
+                      GATEWAY_AUTH_USERNAME: $(GATEWAY_AUTH_USERNAME)
+                      GATEWAY_AUTH_PASSWORD: $(GATEWAY_AUTH_PASSWORD)
+                      GATEWAY_JWT_SECRET: $(GATEWAY_JWT_SECRET)
+
+                # ==================================================
+                # BUILD DOCKER IMAGES
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Build Docker images"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          cd "$(Build.SourcesDirectory)"
+
+                          echo "=============================================="
+                          echo "Building application images"
+                          echo "=============================================="
+
+                          echo "IMAGE_TAG = $(IMAGE_TAG)"
+
+                          docker compose \
+                            -f "$(COMPOSE_FILE)" \
+                            --project-name "$(COMPOSE_PROJECT_NAME)" \
+                            build
+
+                          echo ""
+                          echo "=== Built images ==="
+
+                          docker compose \
+                            -f "$(COMPOSE_FILE)" \
+                            --project-name "$(COMPOSE_PROJECT_NAME)" \
+                            images
+
+                  env:
+                      IMAGE_TAG: $(IMAGE_TAG)
+                      COMPOSE_PROJECT_NAME: $(COMPOSE_PROJECT_NAME)
+
+                      API_GATEWAY_PORT: $(API_GATEWAY_PORT)
+                      PRODUCT_SERVICE_PORT: $(PRODUCT_SERVICE_PORT)
+                      INVENTORY_SERVICE_PORT: $(INVENTORY_SERVICE_PORT)
+                      ORDER_SERVICE_PORT: $(ORDER_SERVICE_PORT)
+                      NOTIFICATION_SERVICE_PORT: $(NOTIFICATION_SERVICE_PORT)
+
+                      MONGO_PORT: $(MONGO_PORT)
+                      MONGO_ROOT_USERNAME: $(MONGO_ROOT_USERNAME)
+                      MONGO_ROOT_PASSWORD: $(MONGO_ROOT_PASSWORD)
+                      MONGO_PRODUCT_USERNAME: $(MONGO_PRODUCT_USERNAME)
+                      MONGO_PRODUCT_PASSWORD: $(MONGO_PRODUCT_PASSWORD)
+                      PRODUCT_DATABASE: $(PRODUCT_DATABASE)
+
+                      MYSQL_PORT: $(MYSQL_PORT)
+                      MYSQL_ROOT_PASSWORD: $(MYSQL_ROOT_PASSWORD)
+                      MYSQL_INVENTORY_USERNAME: $(MYSQL_INVENTORY_USERNAME)
+                      MYSQL_INVENTORY_PASSWORD: $(MYSQL_INVENTORY_PASSWORD)
+                      MYSQL_ORDER_USERNAME: $(MYSQL_ORDER_USERNAME)
+                      MYSQL_ORDER_PASSWORD: $(MYSQL_ORDER_PASSWORD)
+                      INVENTORY_DATABASE: $(INVENTORY_DATABASE)
+                      ORDER_DATABASE: $(ORDER_DATABASE)
+
+                      KAFKA_CLUSTER_ID: $(KAFKA_CLUSTER_ID)
+                      KAFKA_NODE_ID: $(KAFKA_NODE_ID)
+                      KAFKA_PROCESS_ROLES: $(KAFKA_PROCESS_ROLES)
+                      KAFKA_CONTROLLER_QUORUM_VOTERS: $(KAFKA_CONTROLLER_QUORUM_VOTERS)
+                      KAFKA_PORT: $(KAFKA_PORT)
+
+                      MAILPIT_UI_PORT: $(MAILPIT_UI_PORT)
+                      MAILPIT_SMTP_PORT: $(MAILPIT_SMTP_PORT)
+
+                      GATEWAY_AUTH_USERNAME: $(GATEWAY_AUTH_USERNAME)
+                      GATEWAY_AUTH_PASSWORD: $(GATEWAY_AUTH_PASSWORD)
+                      GATEWAY_JWT_SECRET: $(GATEWAY_JWT_SECRET)
+
+                # ==================================================
+                # VERIFY EXACT IMAGES BEFORE SCANNING
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Verify built images"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          image_tag="$(IMAGE_TAG)"
+
+                          if [[ -z "$image_tag" ]]; then
+                            echo "ERROR: IMAGE_TAG pipeline variable is empty."
+                            exit 1
+                          fi
+
+                          if [[ -z "${SERVICES:-}" ]]; then
+                            echo "ERROR: Pipeline variable SERVICES is empty."
+                            exit 1
+                          fi
+
+                          read -ra services <<< "$SERVICES"
+
+                          echo "Using IMAGE_TAG = '$image_tag'"
+
+                          echo "=============================================="
+                          echo "Verifying built application images"
+                          echo "=============================================="
+
+                          for service in "${services[@]}"; do
+                            image="ecommerce/${service}:${image_tag}"
+
+                            echo ""
+                            echo "Checking: $image"
+
+                            if ! docker image inspect "$image" >/dev/null 2>&1; then
+                              echo "ERROR: Expected image does not exist: $image"
+                              exit 1
+                            fi
+
+                            echo "OK: $image"
+                          done
+
+                # ==================================================
+                # TRIVY SECURITY SCAN + HIGH/CRITICAL GATE
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Trivy security scan and gate"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -uo pipefail
+
+                          image_tag="$(IMAGE_TAG)"
+
+                          if [[ -z "$image_tag" ]]; then
+                            echo "ERROR: IMAGE_TAG pipeline variable is empty."
+                            exit 1
+                          fi
+
+                          if [[ -z "${SERVICES:-}" ]]; then
+                            echo "ERROR: Pipeline variable SERVICES is empty."
+                            exit 1
+                          fi
+
+                          read -ra services <<< "$SERVICES"
+
+                          report_dir="$(Build.ArtifactStagingDirectory)/security"
+                          mkdir -p "$report_dir"
+
+                          trivy_cache="$(Agent.TempDirectory)/trivy-cache"
+                          mkdir -p "$trivy_cache"
+
+                          security_failed=false
+
+                          echo "=============================================="
+                          echo "Trivy Security Scan + Gate"
+                          echo "=============================================="
+                          echo "Image tag : $image_tag"
+                          echo "Report dir: $report_dir"
+                          echo "Cache dir : $trivy_cache"
+                          echo "Services  : ${services[*]}"
+
+                          for service in "${services[@]}"; do
+                            image="ecommerce/${service}:${image_tag}"
+                            report="${service}-${image_tag}-trivy.json"
+
+                            echo ""
+                            echo "=============================================="
+                            echo "Scanning: $image"
+                            echo "=============================================="
+
+                            set +e
+
+                            docker run --rm \
+                              -v /var/run/docker.sock:/var/run/docker.sock \
+                              -v "${trivy_cache}:/root/.cache/trivy" \
+                              -v "${report_dir}:/out" \
+                              -v "$(Build.SourcesDirectory):/src:ro" \
+                              "aquasec/trivy:$(TRIVY_VERSION)" \
+                              image \
+                              --scanners vuln,secret,misconfig \
+                              --format json \
+                              --output "/out/$report" \
+                              --severity CRITICAL,HIGH \
+                              --ignore-unfixed \
+                              --ignorefile /src/.trivyignore \
+                              --exit-code 1 \
+                              --no-progress \
+                              "$image"
+
+                            trivy_exit_code=$?
+
+                            set -e
+
+                            if [[ ! -f "$report_dir/$report" ]]; then
+                              echo "##vso[task.logissue type=error]Trivy report was not created for $service."
+                              echo "ERROR: Trivy report was not created for $service."
+                              exit 1
+                            fi
+
+                            if [[ $trivy_exit_code -ne 0 ]]; then
+                              echo ""
+                              echo "##vso[task.logissue type=error]$service failed the Trivy HIGH/CRITICAL security gate."
+                              security_failed=true
+                            else
+                              echo ""
+                              echo "$service passed Trivy security gate."
+                            fi
+                          done
+
+                          echo ""
+                          echo "=============================================="
+                          echo "Trivy scan summary"
+                          echo "=============================================="
+
+                          if [[ "$security_failed" == "true" ]]; then
+                            echo "##vso[task.logissue type=error]One or more images failed the Trivy HIGH/CRITICAL security gate."
+                            echo "Trivy security gate failed."
+                            exit 1
+                          fi
+
+                          echo "All images passed Trivy security gate."
+
+                # ==================================================
+                # SYFT SBOM
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Generate Syft SBOMs"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          image_tag="$(IMAGE_TAG)"
+
+                          if [[ -z "$image_tag" ]]; then
+                            echo "ERROR: IMAGE_TAG pipeline variable is empty."
+                            exit 1
+                          fi
+
+                          if [[ -z "${SERVICES:-}" ]]; then
+                            echo "ERROR: Pipeline variable SERVICES is empty."
+                            exit 1
+                          fi
+
+                          read -ra services <<< "$SERVICES"
+
+                          report_dir="$(Build.ArtifactStagingDirectory)/security"
+                          mkdir -p "$report_dir"
+
+                          for service in "${services[@]}"; do
+                            image="ecommerce/${service}:${image_tag}"
+
+                            echo ""
+                            echo "=============================================="
+                            echo "Generating SBOM"
+                            echo "$image"
+                            echo "=============================================="
+
+                            docker run --rm \
+                              -v /var/run/docker.sock:/var/run/docker.sock \
+                              -v "${report_dir}:/out" \
+                              "anchore/syft:$(SYFT_VERSION)" \
+                              "$image" \
+                              -o "spdx-json=/out/${service}-${image_tag}.spdx.json" \
+                              -o "syft-json=/out/${service}-${image_tag}.syft.json"
+
+                            if [[ ! -f "$report_dir/${service}-${image_tag}.spdx.json" ]]; then
+                              echo "ERROR: SPDX SBOM was not created for $service."
+                              exit 1
+                            fi
+
+                            if [[ ! -f "$report_dir/${service}-${image_tag}.syft.json" ]]; then
+                              echo "ERROR: Syft SBOM was not created for $service."
+                              exit 1
+                            fi
+
+                            echo "SBOM generated successfully for $service."
+                          done
+
+                # ==================================================
+                # CONVERT TRIVY REPORTS TO SARIF
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Convert Trivy reports to SARIF"
+                  condition: succeededOrFailed()
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          image_tag="$(IMAGE_TAG)"
+
+                          if [[ -z "$image_tag" ]]; then
+                            echo "ERROR: IMAGE_TAG pipeline variable is empty."
+                            exit 1
+                          fi
+
+                          if [[ -z "${SERVICES:-}" ]]; then
+                            echo "ERROR: Pipeline variable SERVICES is empty."
+                            exit 1
+                          fi
+
+                          read -ra services <<< "$SERVICES"
+
+                          report_dir="$(Build.ArtifactStagingDirectory)/security"
+
+                          for service in "${services[@]}"; do
+                            json_file="$report_dir/${service}-${image_tag}-trivy.json"
+                            sarif_file="${service}-${image_tag}-trivy.sarif"
+
+                            if [[ ! -f "$json_file" ]]; then
+                              echo "WARNING: Missing Trivy report: $json_file"
+                              continue
+                            fi
+
+                            echo ""
+                            echo "Converting Trivy report for $service"
+
+                            docker run --rm \
+                              -v "${report_dir}:/out" \
+                              "aquasec/trivy:$(TRIVY_VERSION)" \
+                              convert \
+                              --format sarif \
+                              --output "/out/$sarif_file" \
+                              "/out/${service}-${image_tag}-trivy.json"
+
+                            if [[ ! -f "$report_dir/$sarif_file" ]]; then
+                              echo "ERROR: SARIF report was not created for $service."
+                              exit 1
+                            fi
+                          done
+
+                # ==================================================
+                # PUBLISH SECURITY ARTIFACTS
+                # ==================================================
+                - task: PublishPipelineArtifact@1
+                  displayName: "Publish security artifacts"
+                  condition: succeededOrFailed()
+                  inputs:
+                      targetPath: "$(Build.ArtifactStagingDirectory)/security"
+                      artifact: "local-security-$(Build.BuildId)-attempt-$(System.JobAttempt)"
+                      publishLocation: pipeline
+
+                # ==================================================
+                # CLEAN PREVIOUS STATE
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Clean previous Compose stack"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set +e
+
+                          cd "$(Build.SourcesDirectory)"
+
+                          echo "Removing previous stack and volumes (safe for CI)..."
+
+                          docker compose \
+                            -f "$(COMPOSE_FILE)" \
+                            --project-name "$(COMPOSE_PROJECT_NAME)" \
+                            down \
+                            -v \
+                            --remove-orphans
+
+                          echo "Cleanup finished."
+
+                          exit 0
+
+                # ==================================================
+                # VERIFY EXACT IMAGES BEFORE DEPLOYMENT
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Verify exact images before deployment"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          image_tag="$(IMAGE_TAG)"
+
+                          if [[ -z "$image_tag" ]]; then
+                            echo "ERROR: IMAGE_TAG pipeline variable is empty."
+                            exit 1
+                          fi
+
+                          if [[ -z "${SERVICES:-}" ]]; then
+                            echo "ERROR: Pipeline variable SERVICES is empty."
+                            exit 1
+                          fi
+
+                          read -ra services <<< "$SERVICES"
+
+                          echo "Using IMAGE_TAG = '$image_tag'"
+
+                          echo "=============================================="
+                          echo "Pre-deployment image verification"
+                          echo "=============================================="
+
+                          for service in "${services[@]}"; do
+                            expected="ecommerce/${service}:${image_tag}"
+
+                            echo "Checking $expected"
+
+                            if ! docker image inspect "$expected" >/dev/null 2>&1; then
+                              echo "ERROR: Scanned image is missing: $expected"
+                              exit 1
+                            fi
+
+                            echo "Verified: $expected"
+                          done
+
+                # ==================================================
+                # DOCKER COMPOSE DEPLOY
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Deploy scanned images"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          cd "$(Build.SourcesDirectory)"
+
+                          echo "=============================================="
+                          echo "Docker Compose Deployment"
+                          echo "=============================================="
+                          echo "Compose file : $(COMPOSE_FILE)"
+                          echo "Project      : $(COMPOSE_PROJECT_NAME)"
+                          echo "Image tag    : $(IMAGE_TAG)"
+                          echo "Commit       : $(Build.SourceVersion)"
+                          echo "=============================================="
+
+                          # --no-build guarantees that deployment uses
+                          # the already-built and scanned images.
+                          docker compose \
+                            -f "$(COMPOSE_FILE)" \
+                            --project-name "$(COMPOSE_PROJECT_NAME)" \
+                            up \
+                            --detach \
+                            --no-build \
+                            --remove-orphans \
+                            --wait \
+                            --wait-timeout 300
+
+                          echo ""
+                          echo "=== Compose status ==="
+
+                          docker compose \
+                            -f "$(COMPOSE_FILE)" \
+                            --project-name "$(COMPOSE_PROJECT_NAME)" \
+                            ps
+
+                  env:
+                      IMAGE_TAG: $(IMAGE_TAG)
+                      COMPOSE_PROJECT_NAME: $(COMPOSE_PROJECT_NAME)
+
+                      API_GATEWAY_PORT: $(API_GATEWAY_PORT)
+                      PRODUCT_SERVICE_PORT: $(PRODUCT_SERVICE_PORT)
+                      INVENTORY_SERVICE_PORT: $(INVENTORY_SERVICE_PORT)
+                      ORDER_SERVICE_PORT: $(ORDER_SERVICE_PORT)
+                      NOTIFICATION_SERVICE_PORT: $(NOTIFICATION_SERVICE_PORT)
+
+                      MONGO_PORT: $(MONGO_PORT)
+                      MONGO_ROOT_USERNAME: $(MONGO_ROOT_USERNAME)
+                      MONGO_ROOT_PASSWORD: $(MONGO_ROOT_PASSWORD)
+                      MONGO_PRODUCT_USERNAME: $(MONGO_PRODUCT_USERNAME)
+                      MONGO_PRODUCT_PASSWORD: $(MONGO_PRODUCT_PASSWORD)
+                      PRODUCT_DATABASE: $(PRODUCT_DATABASE)
+
+                      MYSQL_PORT: $(MYSQL_PORT)
+                      MYSQL_ROOT_PASSWORD: $(MYSQL_ROOT_PASSWORD)
+                      MYSQL_INVENTORY_USERNAME: $(MYSQL_INVENTORY_USERNAME)
+                      MYSQL_INVENTORY_PASSWORD: $(MYSQL_INVENTORY_PASSWORD)
+                      MYSQL_ORDER_USERNAME: $(MYSQL_ORDER_USERNAME)
+                      MYSQL_ORDER_PASSWORD: $(MYSQL_ORDER_PASSWORD)
+                      INVENTORY_DATABASE: $(INVENTORY_DATABASE)
+                      ORDER_DATABASE: $(ORDER_DATABASE)
+
+                      KAFKA_CLUSTER_ID: $(KAFKA_CLUSTER_ID)
+                      KAFKA_NODE_ID: $(KAFKA_NODE_ID)
+                      KAFKA_PROCESS_ROLES: $(KAFKA_PROCESS_ROLES)
+                      KAFKA_CONTROLLER_QUORUM_VOTERS: $(KAFKA_CONTROLLER_QUORUM_VOTERS)
+                      KAFKA_PORT: $(KAFKA_PORT)
+
+                      MAILPIT_UI_PORT: $(MAILPIT_UI_PORT)
+                      MAILPIT_SMTP_PORT: $(MAILPIT_SMTP_PORT)
+
+                      GATEWAY_AUTH_USERNAME: $(GATEWAY_AUTH_USERNAME)
+                      GATEWAY_AUTH_PASSWORD: $(GATEWAY_AUTH_PASSWORD)
+                      GATEWAY_JWT_SECRET: $(GATEWAY_JWT_SECRET)
+
+                # ==================================================
+                # SMOKE TEST – API GATEWAY
+                # ==================================================
+                - task: Bash@3
+                  displayName: "API Gateway health"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          url="http://localhost:$(API_GATEWAY_PORT)/actuator/health"
+
+                          echo "Checking $url"
+
+                          curl \
+                            --fail \
+                            --silent \
+                            --show-error \
+                            --max-time 30 \
+                            "$url" \
+                            >/dev/null
+
+                          echo "API Gateway is healthy."
+
+                # ==================================================
+                # SMOKE TEST – MAILPIT
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Mailpit readiness"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          url="http://localhost:$(MAILPIT_UI_PORT)/readyz"
+
+                          echo "Checking $url"
+
+                          curl \
+                            --fail \
+                            --silent \
+                            --show-error \
+                            --max-time 30 \
+                            "$url" \
+                            >/dev/null
+
+                          echo "Mailpit is ready."
+
+                # ==================================================
+                # VERIFY COMPOSE DEPLOYMENT
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Verify Compose deployment"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          cd "$(Build.SourcesDirectory)"
+
+                          image_tag="$(IMAGE_TAG)"
+
+                          if [[ -z "$image_tag" ]]; then
+                            echo "ERROR: IMAGE_TAG pipeline variable is empty."
+                            exit 1
+                          fi
+
+                          if [[ -z "${SERVICES:-}" ]]; then
+                            echo "ERROR: Pipeline variable SERVICES is empty."
+                            exit 1
+                          fi
+
+                          read -ra services <<< "$SERVICES"
+
+                          echo "=== Compose services ==="
+
+                          docker compose \
+                            -f "$(COMPOSE_FILE)" \
+                            --project-name "$(COMPOSE_PROJECT_NAME)" \
+                            ps
+
+                          echo ""
+                          echo "=== Compose images ==="
+
+                          docker compose \
+                            -f "$(COMPOSE_FILE)" \
+                            --project-name "$(COMPOSE_PROJECT_NAME)" \
+                            images
+
+                          echo ""
+                          echo "Expected Git SHA: $image_tag"
+
+                          for service in "${services[@]}"; do
+                            expected="ecommerce/${service}:${image_tag}"
+
+                            echo ""
+                            echo "Checking $expected"
+
+                            if ! docker image inspect "$expected" >/dev/null 2>&1; then
+                              echo "ERROR: Expected image does not exist: $expected"
+                              exit 1
+                            fi
+
+                            echo "OK: $expected"
+                          done
+
+                # ==================================================
+                # JWT AUTHENTICATION SMOKE TEST
+                # ==================================================
+                - task: Bash@3
+                  displayName: "JWT authentication smoke test"
+                  env:
+                      GATEWAY_AUTH_USERNAME: $(GATEWAY_AUTH_USERNAME)
+                      GATEWAY_AUTH_PASSWORD: $(GATEWAY_AUTH_PASSWORD)
+                      API_GATEWAY_PORT: $(API_GATEWAY_PORT)
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          AUTH_URL="http://localhost:${API_GATEWAY_PORT}/auth/login"
+                          HEALTH_URL="http://localhost:${API_GATEWAY_PORT}/api/inventory/health"
+
+                          echo "Testing authentication endpoint: ${AUTH_URL}"
+
+                          RESPONSE_FILE="$(mktemp)"
+                          HTTP_CODE="$(
+                            curl \
+                              --silent \
+                              --show-error \
+                              --output "${RESPONSE_FILE}" \
+                              --write-out "%{http_code}" \
+                              --request POST \
+                              --header "Content-Type: application/json" \
+                              --data "{\"username\":\"${GATEWAY_AUTH_USERNAME}\",\"password\":\"${GATEWAY_AUTH_PASSWORD}\"}" \
+                              "${AUTH_URL}"
+                          )"
+
+                          if [ "${HTTP_CODE}" != "200" ]; then
+                            echo "ERROR: Authentication failed with HTTP ${HTTP_CODE}"
+                            cat "${RESPONSE_FILE}"
+                            rm -f "${RESPONSE_FILE}"
+                            exit 1
+                          fi
+
+                          ACCESS_TOKEN="$(
+                            python3 - "${RESPONSE_FILE}" <<'PY'
+                          import json
+                          import sys
+
+                          with open(sys.argv[1], encoding="utf-8") as f:
+                              response = json.load(f)
+
+                          token = response.get("accessToken")
+
+                          if not token:
+                              raise SystemExit("ERROR: accessToken missing from authentication response")
+
+                          print(token)
+                          PY
+                          )"
+
+                          rm -f "${RESPONSE_FILE}"
+
+                          if [ -z "${ACCESS_TOKEN}" ]; then
+                            echo "ERROR: Empty access token"
+                            exit 1
+                          fi
+
+                          echo "Authentication successful."
+                          echo "Testing authenticated endpoint: ${HEALTH_URL}"
+
+                          HEALTH_CODE="$(
+                            curl \
+                              --silent \
+                              --show-error \
+                              --output /dev/null \
+                              --write-out "%{http_code}" \
+                              --header "Authorization: Bearer ${ACCESS_TOKEN}" \
+                              "${HEALTH_URL}"
+                          )"
+
+                          if [ "${HEALTH_CODE}" != "200" ]; then
+                            echo "ERROR: Authenticated request failed with HTTP ${HEALTH_CODE}"
+                            exit 1
+                          fi
+
+                          echo "JWT authentication smoke test passed."
+
+                # ==================================================
+                # DEPLOYMENT SUMMARY
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Deployment summary"
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set -euo pipefail
+
+                          echo ""
+                          echo "=============================================="
+                          echo "LOCAL DEPLOYMENT SUCCESSFUL"
+                          echo "=============================================="
+                          echo "Commit : $(Build.SourceVersion)"
+                          echo "Build  : $(Build.BuildId)"
+                          echo ""
+                          echo "Gateway : http://localhost:$(API_GATEWAY_PORT)"
+                          echo "Mailpit : http://localhost:$(MAILPIT_UI_PORT)"
+                          echo "=============================================="
+
+                # ==================================================
+                # FAILURE DIAGNOSTICS
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Collect Docker Compose diagnostics"
+                  condition: failed()
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set +e
+
+                          cd "$(Build.SourcesDirectory)"
+
+                          echo "=============================================="
+                          echo "Docker Diagnostics"
+                          echo "=============================================="
+
+                          echo ""
+                          echo "=== Docker Info ==="
+                          docker info
+
+                          echo ""
+                          echo "=== Docker Disk Usage ==="
+                          docker system df
+
+                          echo ""
+                          echo "=== Compose Configuration ==="
+
+                          docker compose \
+                            -f "$(COMPOSE_FILE)" \
+                            --project-name "$(COMPOSE_PROJECT_NAME)" \
+                            config
+
+                          echo ""
+                          echo "=== Compose Status ==="
+
+                          docker compose \
+                            -f "$(COMPOSE_FILE)" \
+                            --project-name "$(COMPOSE_PROJECT_NAME)" \
+                            ps -a
+
+                          echo ""
+                          echo "=== Compose Images ==="
+
+                          docker compose \
+                            -f "$(COMPOSE_FILE)" \
+                            --project-name "$(COMPOSE_PROJECT_NAME)" \
+                            images
+
+                          echo ""
+                          echo "=== Container Logs ==="
+
+                          docker compose \
+                            -f "$(COMPOSE_FILE)" \
+                            --project-name "$(COMPOSE_PROJECT_NAME)" \
+                            logs \
+                            --no-color \
+                            --tail 200
+
+                          exit 0
+
+                # ==================================================
+                # CLEANUP (dangling images only)
+                # ==================================================
+                - task: Bash@3
+                  displayName: "Docker cleanup"
+                  condition: always()
+                  inputs:
+                      targetType: inline
+                      script: |
+                          set +e
+
+                          echo "=============================================="
+                          echo "Docker cleanup"
+                          echo "=============================================="
+
+                          docker image prune -f
+
+                          echo ""
+                          echo "Docker disk usage after cleanup:"
+
+                          docker system df
+
+                          exit 0

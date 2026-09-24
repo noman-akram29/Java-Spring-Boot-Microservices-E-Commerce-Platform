@@ -1,0 +1,3 @@
+# Example – ignore a CVE that is accepted risk
+CVE-2023-XXXX
+CVE-2024-YYYY

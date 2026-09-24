@@ -5,9 +5,16 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@TestPropertySource(properties = {
+		"gateway.auth.username=test-gateway",
+		"gateway.auth.password=test-password-not-for-prod",
+		"gateway.jwt.secret=test-jwt-secret-must-be-at-least-32-chars-long!!",
+		"gateway.jwt.expiration-minutes=60"
+})
 class ApiGatewayApplicationTests {
 
 	@Autowired
