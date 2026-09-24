@@ -1,0 +1,188 @@
+# ecommerce-ci-pipeline.yml
+# Production CI – Build, Unit Test, Trivy (vuln+secret+misconfig), Syft SBOM, Push to ECR
+
+trigger:
+    branches:
+        include:
+            - feature/cicd
+            - staging
+            - main
+
+variables:
+    - group: ecommerce-common
+    - name: IMAGE_TAG
+      value: $(Build.BuildId)
+
+pool:
+    name: $(AGENT_POOL)
+    demands:
+        - Agent.Name -equals $(AGENT_NAME)
+
+stages:
+    # ------------------------------------------------
+    # STAGE 1: Build, Scan, SBOM & Push
+    # ------------------------------------------------
+    - stage: Build
+      displayName: Build, Scan, SBOM & Push to ECR
+      jobs:
+          - job: BuildAndPush
+            displayName: Build, Scan, SBOM & Push immutable images
+            steps:
+                - checkout: self
+                  clean: true
+                  fetchDepth: 1
+
+                - script: |
+                      set -euo pipefail
+                      echo "=== Running unit tests ==="
+                      for SERVICE in $(SERVICES); do
+                        if [ -f "${SERVICE}/pom.xml" ]; then
+                          echo "------------------------------------------------"
+                          echo "Tests: ${SERVICE}"
+                          (cd "${SERVICE}" && chmod +x mvnw && ./mvnw -B test)
+                        fi
+                      done
+                      echo "✓ All module tests passed"
+                  displayName: "Unit tests"
+
+                # Surfaces failures in the Tests tab instead of burying them in log output.
+                # Runs even when the step above fails - that is the whole point.
+                - task: PublishTestResults@2
+                  displayName: "Publish test results"
+                  condition: succeededOrFailed()
+                  inputs:
+                      testResultsFormat: "JUnit"
+                      testResultsFiles: "**/target/surefire-reports/TEST-*.xml"
+                      mergeTestResults: true
+                      failTaskOnFailedTests: true
+
+                - task: AWSShellScript@1
+                  displayName: "ECR Login + Build + Trivy + Syft + Push"
+                  inputs:
+                      awsCredentials: "AWS-ECR-OIDC"
+                      regionName: $(AWS_REGION)
+                      scriptType: "inline"
+                      inlineScript: |
+                          set -euo pipefail
+
+                          REGISTRY="$(ECR_REGISTRY)"
+                          TAG="$(IMAGE_TAG)"
+                          SERVICES="$(SERVICES)"
+                          REPORT_DIR="$(Build.ArtifactStagingDirectory)/security"
+                          TRIVY_CACHE="${HOME}/.cache/trivy"
+                          SRC_DIR="$(Build.SourcesDirectory)"
+
+                          # Write reports straight to the staging dir. No copy step,
+                          # so a failure here fails the build instead of silently
+                          # publishing an empty artifact.
+                          mkdir -p "${REPORT_DIR}" "${TRIVY_CACHE}"
+
+                          echo "=== Caller identity ==="
+                          aws sts get-caller-identity
+
+                          echo "=== Logging in to ECR ==="
+                          aws ecr get-login-password --region $(AWS_REGION) | \
+                            docker login --username AWS --password-stdin "${REGISTRY}"
+
+                          echo "=== Building, Scanning, SBOM Generation, and Pushing services ==="
+                          for SERVICE in $SERVICES; do
+                            IMAGE="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
+
+                            echo "------------------------------------------------"
+                            echo "Building ${SERVICE}"
+                            echo "------------------------------------------------"
+                            DOCKER_BUILDKIT=1 docker build \
+                              --tag "${IMAGE}" \
+                              --file "${SERVICE}/Dockerfile" \
+                              "${SERVICE}"
+
+                            # Pass 1: full report (vuln + secret + misconfig) - never fails the build.
+                            # Gives you something to triage when pass 2 kills the build.
+                            echo "=== Trivy full report (vuln + secret + misconfig) ==="
+                            docker run --rm \
+                              -v /var/run/docker.sock:/var/run/docker.sock \
+                              -v "${TRIVY_CACHE}:/root/.cache/trivy" \
+                              -v "${REPORT_DIR}:/out" \
+                              -v "${SRC_DIR}:/src:ro" \
+                              aquasec/trivy:$(TRIVY_VERSION) image \
+                                --scanners vuln,secret,misconfig \
+                                --format json \
+                                --output "/out/${SERVICE}-${TAG}-trivy.json" \
+                                --ignorefile /src/.trivyignore \
+                                --no-progress \
+                                "${IMAGE}" || true
+
+                            # Pass 2: the gate. Hits the warm DB cache, so it is fast.
+                            # Fails the build on CRITICAL or HIGH findings.
+                            echo "=== Trivy vulnerability gate (CRITICAL,HIGH) ==="
+                            docker run --rm \
+                              -v /var/run/docker.sock:/var/run/docker.sock \
+                              -v "${TRIVY_CACHE}:/root/.cache/trivy" \
+                              -v "${SRC_DIR}:/src:ro" \
+                              aquasec/trivy:$(TRIVY_VERSION) image \
+                                --scanners vuln,secret,misconfig \
+                                --exit-code 1 \
+                                --severity CRITICAL,HIGH \
+                                --ignore-unfixed \
+                                --ignorefile /src/.trivyignore \
+                                --no-progress \
+                                "${IMAGE}"
+                            echo "The ${SERVICE} passed Trivy scan 🎉"
+
+                            echo "=== Generating Syft SBOM for ${SERVICE} ==="
+                            docker run --rm \
+                              -v /var/run/docker.sock:/var/run/docker.sock \
+                              -v "${REPORT_DIR}:/out" \
+                              anchore/syft:$(SYFT_VERSION) \
+                              "${IMAGE}" \
+                              -o "spdx-json=/out/${SERVICE}-${TAG}.spdx.json" \
+                              -o "syft-json=/out/${SERVICE}-${TAG}.syft.json"
+                            echo "SBOM generated for ${SERVICE}"
+
+                            echo "=== Pushing ${IMAGE} ==="
+                            docker push "${IMAGE}"
+                            echo "The ${SERVICE} done."
+                          done
+
+                          echo ""
+                          echo "All images passed vulnerability gates, generated SBOMs, and pushed successfully!"
+
+                # Convert Trivy JSON reports to SARIF so they appear in the Security tab
+                - script: |
+                      set -euo pipefail
+                      REPORT_DIR="$(Build.ArtifactStagingDirectory)/security"
+                      TAG="$(IMAGE_TAG)"
+                      SERVICES="$(SERVICES)"
+
+                      echo "=== Converting Trivy JSON → SARIF ==="
+                      for SERVICE in $SERVICES; do
+                        JSON_FILE="${REPORT_DIR}/${SERVICE}-${TAG}-trivy.json"
+                        if [ -f "${JSON_FILE}" ]; then
+                          docker run --rm \
+                            -v "${REPORT_DIR}:/out" \
+                            aquasec/trivy:$(TRIVY_VERSION) convert \
+                              --format sarif \
+                              --output "/out/${SERVICE}-${TAG}-trivy.sarif" \
+                              "/out/${SERVICE}-${TAG}-trivy.json"
+                          echo "Created ${SERVICE}-${TAG}-trivy.sarif"
+                        else
+                          echo "WARNING: ${JSON_FILE} not found - skipping SARIF conversion"
+                        fi
+                      done
+                  displayName: "Convert Trivy reports to SARIF"
+                  condition: succeededOrFailed()
+
+                - task: PublishPipelineArtifact@1
+                  displayName: "Publish SBOMs & vulnerability reports"
+                  condition: succeededOrFailed()
+                  inputs:
+                      targetPath: "$(Build.ArtifactStagingDirectory)/security"
+                      artifact: "security-$(Build.BuildId)"
+                      publishLocation: "pipeline"
+
+                # Self-hosted agent building 5 images per run fills the disk quietly.
+                - script: |
+                      docker image prune -af --filter "until=48h" || true
+                      docker builder prune -af --filter "until=48h" || true
+                  displayName: "Prune old Docker layers"
+                  condition: always()
