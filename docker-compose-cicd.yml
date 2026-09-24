@@ -14,7 +14,7 @@ x-healthcheck: &default-healthcheck
     interval: 10s
     timeout: 5s
     retries: 10
-    start_period: 20s
+    start_period: 40s
 
 services:
     mongodb:
@@ -23,7 +23,7 @@ services:
         healthcheck:
             <<: *default-healthcheck
             test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-            retries: 5
+            retries: 10
         environment:
             MONGO_INITDB_ROOT_USERNAME: "${MONGO_ROOT_USERNAME}"
             MONGO_INITDB_ROOT_PASSWORD: "${MONGO_ROOT_PASSWORD}"
@@ -55,6 +55,8 @@ services:
                     "CMD-SHELL",
                     'mysqladmin ping -h localhost -u root -p"$$MYSQL_ROOT_PASSWORD"',
                 ]
+            retries: 15
+            start_period: 60s
         environment:
             MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
             MYSQL_INVENTORY_PASSWORD: "${MYSQL_INVENTORY_PASSWORD}"
@@ -79,7 +81,6 @@ services:
     kafka:
         <<: *common
         image: apache/kafka:3.9.0
-
         environment:
             KAFKA_NODE_ID: "${KAFKA_NODE_ID}"
             KAFKA_PROCESS_ROLES: "${KAFKA_PROCESS_ROLES}"
@@ -93,7 +94,6 @@ services:
             KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
             KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
             CLUSTER_ID: "${KAFKA_CLUSTER_ID}"
-
         expose:
             - "${KAFKA_PORT}"
         volumes:
@@ -119,7 +119,6 @@ services:
     mailpit:
         <<: *common
         image: axllent/mailpit:v1.31
-
         healthcheck:
             <<: *default-healthcheck
             test:
@@ -130,7 +129,6 @@ services:
                     "-q",
                     "http://localhost:8025/readyz",
                 ]
-
         ports:
             - "${MAILPIT_UI_PORT}:8025"
             - "${MAILPIT_SMTP_PORT}:1025"
@@ -148,7 +146,7 @@ services:
         build:
             context: ./product-service
             dockerfile: Dockerfile
-        image: ecommerce/product-service:dev
+        image: ecommerce/product-service:${IMAGE_TAG:-dev}
         depends_on:
             mongodb:
                 condition: service_healthy
@@ -182,7 +180,7 @@ services:
         build:
             context: ./inventory-service
             dockerfile: Dockerfile
-        image: ecommerce/inventory-service:dev
+        image: ecommerce/inventory-service:${IMAGE_TAG:-dev}
         depends_on:
             mysql:
                 condition: service_healthy
@@ -216,7 +214,7 @@ services:
         build:
             context: ./order-service
             dockerfile: Dockerfile
-        image: ecommerce/order-service:dev
+        image: ecommerce/order-service:${IMAGE_TAG:-dev}
         depends_on:
             mysql:
                 condition: service_healthy
@@ -254,7 +252,7 @@ services:
         build:
             context: ./notification-service
             dockerfile: Dockerfile
-        image: ecommerce/notification-service:dev
+        image: ecommerce/notification-service:${IMAGE_TAG:-dev}
         depends_on:
             kafka:
                 condition: service_healthy
@@ -288,7 +286,7 @@ services:
         build:
             context: ./api-gateway
             dockerfile: Dockerfile
-        image: ecommerce/api-gateway:dev
+        image: ecommerce/api-gateway:${IMAGE_TAG:-dev}
         depends_on:
             inventory-service:
                 condition: service_healthy
