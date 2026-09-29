@@ -48,12 +48,7 @@
 # Docker daemon.
 # ============================================================
 
-trigger:
-    branches:
-        include:
-            - feature/cicd
-            - staging
-
+trigger: none
 pr: none
 
 variables:
