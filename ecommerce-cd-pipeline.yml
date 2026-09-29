@@ -15,7 +15,7 @@ trigger: none # never runs on git push – only triggered by the CI pipeline
 resources:
     pipelines:
         - pipeline: ci # alias used later as resources.pipeline.ci
-          source: "ecommerce-ci-pipeline" # ← must match the exact name of your CI pipeline
+          source: "E-Commerce CI" # ← must match the exact name of your CI pipeline
           trigger:
               branches:
                   include:
