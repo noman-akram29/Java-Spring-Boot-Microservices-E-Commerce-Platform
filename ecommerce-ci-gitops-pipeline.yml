@@ -1,0 +1,197 @@
+# ecommerce-ci-gitops-pipeline.yml   (Azure DevOps pipeline name: "E-Commerce CI (GitOps)")
+#
+# Build, unit-test, scan (Trivy), generate SBOMs (Syft) and push immutable images
+# to ECR. On success it publishes an "image-manifest" artifact containing one line
+# per service:  <service>=<registry>/ecommerce/<service>:<tag>@sha256:<digest>
+#
+# This pipeline never touches Git and never touches the cluster.
+# The "E-Commerce CD (GitOps)" pipeline consumes the manifest.
+
+trigger:
+  branches:
+    include:
+      - staging
+
+pr: none
+
+variables:
+  - group: ecommerce-common
+  - name: IMAGE_TAG
+    value: $(Build.BuildId)
+
+pool:
+  name: $(AGENT_POOL)
+  demands:
+    - Agent.Name -equals $(AGENT_NAME)
+
+stages:
+  - stage: Build
+    displayName: Build, Scan, SBOM and Push to ECR
+    jobs:
+      - job: BuildAndPush
+        displayName: Build, scan and push immutable images
+        steps:
+          - checkout: self
+            clean: true
+            fetchDepth: 1
+
+          - script: |
+              set -euo pipefail
+              echo "=== Running unit tests ==="
+              for SERVICE in $(SERVICES); do
+                if [ -f "${SERVICE}/pom.xml" ]; then
+                  echo "------------------------------------------------"
+                  echo "Tests: ${SERVICE}"
+                  (cd "${SERVICE}" && chmod +x mvnw && ./mvnw -B test)
+                fi
+              done
+              echo "All module tests passed"
+            displayName: "Unit tests"
+
+          - task: PublishTestResults@2
+            displayName: "Publish test results"
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: "JUnit"
+              testResultsFiles: "**/target/surefire-reports/TEST-*.xml"
+              mergeTestResults: true
+              failTaskOnFailedTests: true
+
+          - task: AWSShellScript@1
+            displayName: "ECR login, build, Trivy gate, Syft SBOM, push, record digests"
+            inputs:
+              awsCredentials: "AWS-ECR-OIDC"
+              regionName: $(AWS_REGION)
+              scriptType: "inline"
+              inlineScript: |
+                set -euo pipefail
+
+                REGISTRY="$(ECR_REGISTRY)"
+                TAG="$(IMAGE_TAG)"
+                SERVICES="$(SERVICES)"
+                REPORT_DIR="$(Build.ArtifactStagingDirectory)/security"
+                MANIFEST_DIR="$(Build.ArtifactStagingDirectory)/image-manifest"
+                MANIFEST="${MANIFEST_DIR}/images.txt"
+                REFFILE="$(Agent.TempDirectory)/image-ref.txt"
+                TRIVY_CACHE="${HOME}/.cache/trivy"
+                SRC_DIR="$(Build.SourcesDirectory)"
+
+                mkdir -p "${REPORT_DIR}" "${MANIFEST_DIR}" "${TRIVY_CACHE}"
+                : > "${MANIFEST}"
+
+                echo "=== Caller identity ==="
+                aws sts get-caller-identity
+
+                echo "=== Logging in to ECR ==="
+                aws ecr get-login-password --region $(AWS_REGION) | \
+                  docker login --username AWS --password-stdin "${REGISTRY}"
+
+                for SERVICE in $SERVICES; do
+                  IMAGE="${REGISTRY}/ecommerce/${SERVICE}:${TAG}"
+
+                  echo "------------------------------------------------"
+                  echo "Building ${SERVICE}"
+                  echo "------------------------------------------------"
+                  DOCKER_BUILDKIT=1 docker build \
+                    --tag "${IMAGE}" \
+                    --file "${SERVICE}/Dockerfile" \
+                    "${SERVICE}"
+
+                  echo "=== Trivy full report (never fails the build) ==="
+                  docker run --rm \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    -v "${TRIVY_CACHE}:/root/.cache/trivy" \
+                    -v "${REPORT_DIR}:/out" \
+                    -v "${SRC_DIR}:/src:ro" \
+                    aquasec/trivy:$(TRIVY_VERSION) image \
+                      --scanners vuln,secret,misconfig \
+                      --format json \
+                      --output "/out/${SERVICE}-${TAG}-trivy.json" \
+                      --ignorefile /src/.trivyignore \
+                      --no-progress \
+                      "${IMAGE}" || true
+
+                  echo "=== Trivy gate (CRITICAL,HIGH fail the build) ==="
+                  docker run --rm \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    -v "${TRIVY_CACHE}:/root/.cache/trivy" \
+                    -v "${SRC_DIR}:/src:ro" \
+                    aquasec/trivy:$(TRIVY_VERSION) image \
+                      --scanners vuln,secret,misconfig \
+                      --exit-code 1 \
+                      --severity CRITICAL,HIGH \
+                      --ignore-unfixed \
+                      --ignorefile /src/.trivyignore \
+                      --no-progress \
+                      "${IMAGE}"
+                  echo "${SERVICE} passed the Trivy gate"
+
+                  echo "=== Syft SBOM for ${SERVICE} ==="
+                  docker run --rm \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    -v "${REPORT_DIR}:/out" \
+                    anchore/syft:$(SYFT_VERSION) \
+                    "${IMAGE}" \
+                    -o "spdx-json=/out/${SERVICE}-${TAG}.spdx.json" \
+                    -o "syft-json=/out/${SERVICE}-${TAG}.syft.json"
+
+                  echo "=== Pushing ${IMAGE} ==="
+                  docker push "${IMAGE}"
+
+                  docker inspect --format '{{index .RepoDigests 0}}' "${IMAGE}" > "${REFFILE}"
+                  read -r REF < "${REFFILE}"
+                  case "${REF}" in
+                    *@sha256:*) ;;
+                    *) echo "ERROR: no registry digest for ${SERVICE}"; exit 1 ;;
+                  esac
+                  DIGEST="${REF##*@}"
+                  echo "${SERVICE}=${IMAGE}@${DIGEST}" >> "${MANIFEST}"
+                  echo "${SERVICE} pushed: ${DIGEST}"
+                done
+
+                echo "=== Image manifest ==="
+                cat "${MANIFEST}"
+                echo "All images passed the gates, were pushed, and their digests were recorded."
+
+          - script: |
+              set -euo pipefail
+              REPORT_DIR="$(Build.ArtifactStagingDirectory)/security"
+              TAG="$(IMAGE_TAG)"
+              for SERVICE in $(SERVICES); do
+                JSON_FILE="${REPORT_DIR}/${SERVICE}-${TAG}-trivy.json"
+                if [ -f "${JSON_FILE}" ]; then
+                  docker run --rm \
+                    -v "${REPORT_DIR}:/out" \
+                    aquasec/trivy:$(TRIVY_VERSION) convert \
+                      --format sarif \
+                      --output "/out/${SERVICE}-${TAG}-trivy.sarif" \
+                      "/out/${SERVICE}-${TAG}-trivy.json"
+                else
+                  echo "WARNING: ${JSON_FILE} not found - skipping SARIF conversion"
+                fi
+              done
+            displayName: "Convert Trivy reports to SARIF"
+            condition: succeededOrFailed()
+
+          - task: PublishPipelineArtifact@1
+            displayName: "Publish SBOMs and vulnerability reports"
+            condition: succeededOrFailed()
+            inputs:
+              targetPath: "$(Build.ArtifactStagingDirectory)/security"
+              artifact: "security-$(Build.BuildId)"
+              publishLocation: "pipeline"
+
+          # Only published when every image was scanned, pushed and its digest recorded.
+          - task: PublishPipelineArtifact@1
+            displayName: "Publish image manifest (consumed by CD GitOps)"
+            condition: succeeded()
+            inputs:
+              targetPath: "$(Build.ArtifactStagingDirectory)/image-manifest"
+              artifact: "image-manifest"
+              publishLocation: "pipeline"
+
+          - script: |
+              docker image prune -af --filter "until=48h" || true
+              docker builder prune -af --filter "until=48h" || true
+            displayName: "Prune old Docker layers"
+            condition: always()

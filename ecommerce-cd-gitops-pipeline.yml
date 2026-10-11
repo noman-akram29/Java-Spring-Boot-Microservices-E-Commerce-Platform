@@ -1,0 +1,110 @@
+# ecommerce-cd-gitops-pipeline.yml   (Azure DevOps pipeline name: "E-Commerce CD (GitOps)")
+#
+# Triggered when "E-Commerce CI (GitOps)" succeeds on the staging branch.
+# It does NOT deploy and has NO cluster credentials. It only records the desired
+# state in the GitOps repository (image digests). Argo CD reconciles the cluster.
+
+trigger: none
+pr: none
+
+resources:
+  pipelines:
+    - pipeline: ci
+      source: "E-Commerce CI (GitOps)"
+      trigger:
+        branches:
+          include:
+            - staging
+
+variables:
+  - group: ecommerce-common
+  - name: GITOPS_REPO
+    value: git@github.com:noman-akram29/ecommerce-platform-gitops.git
+  - name: GITOPS_BRANCH
+    value: main
+  - name: GITOPS_APPS_PATH
+    value: environments/kubeadm/staging/apps
+
+pool:
+  name: $(AGENT_POOL)
+  demands:
+    - Agent.Name -equals $(AGENT_NAME)
+
+stages:
+  - stage: Release
+    displayName: Record desired state in GitOps repository
+    jobs:
+      - job: UpdateDesiredState
+        displayName: Commit image digests to GitOps repo
+        steps:
+          - checkout: none
+
+          - download: ci
+            artifact: image-manifest
+            displayName: "Download image manifest from CI"
+
+          - task: DownloadSecureFile@1
+            name: gitopsKey
+            displayName: "Download GitOps deploy key"
+            inputs:
+              secureFile: "gitops-ci-deploy-key"
+
+          - script: |
+              set -euo pipefail
+
+              case "$(resources.pipeline.ci.sourceBranch)" in
+                refs/heads/staging) ;;
+                *) echo "Refusing to deploy a build from $(resources.pipeline.ci.sourceBranch)"; exit 1 ;;
+              esac
+
+              MANIFEST="$(Pipeline.Workspace)/ci/image-manifest/images.txt"
+              test -s "${MANIFEST}"
+              echo "=== Manifest from CI run $(resources.pipeline.ci.runID) ==="
+              cat "${MANIFEST}"
+
+              KEY="$(gitopsKey.secureFilePath)"
+              chmod 600 "${KEY}"
+              export GIT_SSH_COMMAND="ssh -i ${KEY} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+              WORK="$(Agent.TempDirectory)/gitops-update"
+              TMPLINE="$(Agent.TempDirectory)/manifest-line.txt"
+              rm -rf "${WORK}"
+              git clone --depth 1 --branch $(GITOPS_BRANCH) $(GITOPS_REPO) "${WORK}"
+              cd "${WORK}"
+              git config user.name "azdo-ci"
+              git config user.email "azdo-ci@users.noreply.github.com"
+
+              for SERVICE in $(SERVICES); do
+                grep -m1 "^${SERVICE}=" "${MANIFEST}" > "${TMPLINE}" || { echo "ERROR: ${SERVICE} missing from manifest"; exit 1; }
+                read -r LINE < "${TMPLINE}"
+                REF="${LINE#*=}"
+
+                # Only accept exactly: <our registry>/ecommerce/<service>:<number>@sha256:<64 hex>
+                printf '%s\n' "${REF}" | grep -Eq "^$(ECR_REGISTRY)/ecommerce/${SERVICE}:[0-9]+@sha256:[0-9a-f]{64}$" \
+                  || { echo "ERROR: unexpected image reference for ${SERVICE}"; exit 1; }
+
+                FILE="$(GITOPS_APPS_PATH)/${SERVICE}/deployment.yaml"
+                test -f "${FILE}"
+                sed -i -E "s#image: \"[^\"]*/ecommerce/${SERVICE}:[^\"]*\"#image: \"${REF}\"#" "${FILE}"
+                grep -qF "image: \"${REF}\"" "${FILE}" || { echo "ERROR: could not update ${FILE}"; exit 1; }
+                echo "updated ${SERVICE}"
+              done
+
+              git add -A
+              if git diff --cached --quiet; then
+                echo "No desired-state change to commit"
+                exit 0
+              fi
+              git commit -m "ci(staging): deploy CI run $(resources.pipeline.ci.runID) from app commit $(resources.pipeline.ci.sourceCommit)"
+
+              for ATTEMPT in 1 2 3; do
+                git pull --rebase origin $(GITOPS_BRANCH)
+                if git push origin HEAD:$(GITOPS_BRANCH); then
+                  echo "Desired state pushed. Argo CD will reconcile the cluster."
+                  exit 0
+                fi
+                echo "Push rejected (attempt ${ATTEMPT}), retrying"
+                sleep 5
+              done
+              echo "ERROR: could not push after 3 attempts"
+              exit 1
+            displayName: "Validate manifest and commit digests to GitOps repo"
