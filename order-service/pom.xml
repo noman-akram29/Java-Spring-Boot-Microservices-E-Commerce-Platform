@@ -2,12 +2,11 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <!-- Parent Naming Convention: spring-boot-starter-parent (Group: org.springframework.boot, Artifact: spring-boot-starter-parent) -->
     <parent>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.1</version>
-        <relativePath/> <!-- lookup parent from repository -->
+        <groupId>com.techie.microservices</groupId>
+        <artifactId>ecommerce-dependency-parent</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
     <!-- Service Naming Convention: order-service (Group: com.techie.microservices, Artifact: order-service) -->
     <groupId>com.techie.microservices</groupId>
@@ -29,14 +28,9 @@
         <url/>
     </scm>
     <properties>
-        <java.version>21</java.version>
-        <spring-cloud.version>2025.1.3</spring-cloud.version>
-        <spring-cloud-contract.version>5.0.3</spring-cloud-contract.version>
-        <testcontainers.version>1.21.4</testcontainers.version>
         <netty.version>4.1.137.Final</netty.version>
         <tomcat.version>10.1.59</tomcat.version>
         <!-- Upgraded Jackson version to patch vulnerabilities -->
-        <jackson.version>2.21.7</jackson.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
     <dependencies>
@@ -168,7 +162,7 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
-        
+
         <dependency>
             <groupId>org.wiremock.integrations</groupId>
             <artifactId>wiremock-spring-boot</artifactId>
@@ -180,7 +174,7 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-jackson2</artifactId>
         </dependency>
-        
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-flyway</artifactId>
@@ -189,22 +183,7 @@
     </dependencies>
     <dependencyManagement>
         <dependencies>
-            <!-- Managed Dependency Convention: spring-cloud-dependencies -->
-            <dependency>
-                <groupId>org.springframework.cloud</groupId>
-                <artifactId>spring-cloud-dependencies</artifactId>
-                <version>${spring-cloud.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <!-- Manage Testcontainers module versions consistently -->
-            <dependency>
-                <groupId>org.testcontainers</groupId>
-                <artifactId>testcontainers-bom</artifactId>
-                <version>${testcontainers.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
+
             <!-- Manage Spring Cloud Contract dependencies consistently -->
             <dependency>
                 <groupId>org.springframework.cloud</groupId>
@@ -213,14 +192,7 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            <!-- Force Jackson Bill of Materials (BoM) to secure version: jackson-bom (Group: com.fasterxml.jackson, Artifact: jackson-bom) -->
-            <dependency>
-                <groupId>com.fasterxml.jackson</groupId>
-                <artifactId>jackson-bom</artifactId>
-                <version>${jackson.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
+
         </dependencies>
     </dependencyManagement>
     <build>
