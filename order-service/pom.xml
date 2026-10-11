@@ -180,6 +180,12 @@
             <artifactId>spring-boot-starter-flyway</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>at.yawk.lz4</groupId>
+            <artifactId>lz4-java</artifactId>
+            <version>1.11.4</version>
+        </dependency>
+
     </dependencies>
     <dependencyManagement>
         <dependencies>

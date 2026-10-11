@@ -32,7 +32,10 @@ public class KafkaProducerConfiguration {
                 ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
                 JsonSerializer.class);
 
-        return new DefaultKafkaProducerFactory<>(properties);
+        return new DefaultKafkaProducerFactory<>(
+                properties,
+                new StringSerializer(),
+                new JsonSerializer<OrderPlacedEvent>());
     }
 
     @Bean
