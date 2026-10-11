@@ -1,4 +1,4 @@
-x-default-logging: &default-logging
+﻿x-default-logging: &default-logging
     driver: json-file
     options:
         max-size: "10m"
@@ -146,8 +146,8 @@ services:
     product-service:
         <<: *common
         build:
-            context: ./product-service
-            dockerfile: Dockerfile
+            context: .
+            dockerfile: product-service/Dockerfile
         image: ecommerce/product-service:dev
         depends_on:
             mongodb:
@@ -180,8 +180,8 @@ services:
     inventory-service:
         <<: *common
         build:
-            context: ./inventory-service
-            dockerfile: Dockerfile
+            context: .
+            dockerfile: inventory-service/Dockerfile
         image: ecommerce/inventory-service:dev
         depends_on:
             mysql:
@@ -214,8 +214,8 @@ services:
     order-service:
         <<: *common
         build:
-            context: ./order-service
-            dockerfile: Dockerfile
+            context: .
+            dockerfile: order-service/Dockerfile
         image: ecommerce/order-service:dev
         depends_on:
             mysql:
@@ -252,8 +252,8 @@ services:
     notification-service:
         <<: *common
         build:
-            context: ./notification-service
-            dockerfile: Dockerfile
+            context: .
+            dockerfile: notification-service/Dockerfile
         image: ecommerce/notification-service:dev
         depends_on:
             kafka:
@@ -286,8 +286,8 @@ services:
     api-gateway:
         <<: *common
         build:
-            context: ./api-gateway
-            dockerfile: Dockerfile
+            context: .
+            dockerfile: api-gateway/Dockerfile
         image: ecommerce/api-gateway:dev
         depends_on:
             inventory-service:
@@ -328,3 +328,5 @@ volumes:
 networks:
     ecommerce-network:
         driver: bridge
+
+

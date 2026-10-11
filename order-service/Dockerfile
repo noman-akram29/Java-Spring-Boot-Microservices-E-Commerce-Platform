@@ -8,20 +8,21 @@ FROM maven:3.9.9-eclipse-temurin-21 AS build
 WORKDIR /workspace
 
 # Copy Maven files first for better layer caching
-COPY pom.xml .
+COPY pom.xml ./pom.xml
+COPY order-service/pom.xml ./order-service/pom.xml
 # COPY mvnw .
 # COPY .mvn .mvn
 
 # Download dependencies using BuildKit cache
 RUN --mount=type=cache,target=/root/.m2 \
-    mvn -B --no-transfer-progress dependency:go-offline
+    mvn -f order-service/pom.xml -B --no-transfer-progress dependency:go-offline
 
 # Copy application source
-COPY src ./src
+COPY order-service/src ./order-service/src
 
 # Build application
 RUN --mount=type=cache,target=/root/.m2 \
-    mvn -B --no-transfer-progress clean package -DskipTests
+    mvn -f order-service/pom.xml -B --no-transfer-progress clean package -DskipTests
 
 # Download and verify OpenTelemetry Java agent
 ARG OTEL_AGENT_VERSION=2.28.1
@@ -58,12 +59,12 @@ RUN groupadd --gid 1001 spring && \
     --create-home spring
 
 # Copy executable JAR
-COPY --from=build --chown=spring:spring /workspace/target/*.jar app.jar
+COPY --from=build --chown=spring:spring /workspace/order-service/target/*.jar app.jar
 
 # OpenTelemetry Java agent
 COPY --from=build --chown=spring:spring /workspace/otel/opentelemetry-javaagent.jar /otel/opentelemetry-javaagent.jar
 
-COPY --chmod=755 entrypoint.sh /app/entrypoint.sh
+COPY --chmod=755 order-service/entrypoint.sh /app/entrypoint.sh
 
 USER spring:spring
 
