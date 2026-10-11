@@ -38,6 +38,12 @@ RUN mkdir -p /workspace/otel \
 ############################################
 FROM eclipse-temurin:21-jre-jammy
 
+# Keep OS packages patched
+RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 # OCI Image Metadata
 LABEL org.opencontainers.image.title="notification-service" \
     org.opencontainers.image.description="Spring Boot Application - Notification Service" \
