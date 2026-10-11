@@ -7,13 +7,19 @@ FROM maven:3.9.9-eclipse-temurin-21 AS build
 
 WORKDIR /workspace
 
+# Copy Maven files first for better layer caching
 COPY pom.xml .
+# COPY mvnw .
+# COPY .mvn .mvn
 
+# Download dependencies using BuildKit cache
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B --no-transfer-progress dependency:go-offline
 
+    # Copy application source
 COPY src ./src
 
+# Build application
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B --no-transfer-progress clean package -DskipTests
 
@@ -32,17 +38,26 @@ RUN mkdir -p /workspace/otel \
 ############################################
 FROM eclipse-temurin:21-jre-jammy
 
+# Keep OS packages patched
+RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# OCI Image Metadata
 LABEL org.opencontainers.image.title="product-service" \
     org.opencontainers.image.description="Spring Boot Application - Product Service" \
     org.opencontainers.image.vendor="NULL"
 
 WORKDIR /app
 
+# Create non-root user with fixed UID/GID
 RUN groupadd --gid 1001 spring && \
     useradd --uid 1001 --gid spring \
     --shell /usr/sbin/nologin \
     --create-home spring
 
+# Copy executable JAR
 COPY --from=build --chown=spring:spring /workspace/target/*.jar app.jar
 
 # OpenTelemetry Java agent
