@@ -94,7 +94,7 @@ stages:
                             DOCKER_BUILDKIT=1 docker build \
                               --tag "${IMAGE}" \
                               --file "${SERVICE}/Dockerfile" \
-                              "${SERVICE}"
+                              "${SRC_DIR}"
 
                             # Pass 1: full report (vuln + secret + misconfig) - never fails the build.
                             # Gives you something to triage when pass 2 kills the build.
