@@ -95,7 +95,7 @@ stages:
                   DOCKER_BUILDKIT=1 docker build \
                     --tag "${IMAGE}" \
                     --file "${SERVICE}/Dockerfile" \
-                    "${SERVICE}"
+                    "${SRC_DIR}"
 
                   echo "=== Trivy full report (never fails the build) ==="
                   docker run --rm \
