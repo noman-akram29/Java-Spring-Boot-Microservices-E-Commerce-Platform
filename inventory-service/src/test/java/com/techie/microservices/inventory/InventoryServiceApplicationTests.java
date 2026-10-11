@@ -10,6 +10,14 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -20,12 +28,13 @@ class InventoryServiceApplicationTests {
 
 	@BeforeEach
 	void setUp() {
+		RestAssured.reset();
 		RestAssured.baseURI = "http://localhost";
 		RestAssured.port = port;
 	}
 
 	@Test
-	void shouldCreateThenDecreaseInventoryEndToEnd() {
+	void shouldCreateThenDecreaseInventoryEndToEnd() throws Exception {
 		String sku = "sku-" + System.currentTimeMillis();
 
 		RestAssured.given()
@@ -42,10 +51,17 @@ class InventoryServiceApplicationTests {
 				.then().statusCode(200)
 				.body("quantity", Matchers.equalTo(6));
 
-		RestAssured.given()
-				.when().get("/" + sku)
-				.then().statusCode(200)
-				.body("quantity", Matchers.equalTo(6));
+		// Plain Java HttpClient — avoids RestAssured CsrfFilter NPE
+		HttpClient client = HttpClient.newHttpClient();
+		HttpRequest request = HttpRequest.newBuilder()
+				.uri(URI.create("http://localhost:" + port + "/" + sku))
+				.GET()
+				.build();
+		HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+		assertEquals(200, response.statusCode());
+		assertTrue(response.body().contains("\"quantity\":6")
+				|| response.body().contains("\"quantity\": 6"));
 	}
 
 	@Test
